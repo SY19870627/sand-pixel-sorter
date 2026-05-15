@@ -1,0 +1,21 @@
+# 本機瀏覽器測試與快取資料
+.codex-browser/
+
+# Node / 前端工具常見輸出
+node_modules/
+dist/
+build/
+.vite/
+.cache/
+
+# Python 暫存
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 系統與編輯器暫存
+.DS_Store
+Thumbs.db
+*.log
+*.tmp

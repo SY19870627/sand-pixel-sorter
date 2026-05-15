@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sand Pixel Sorter</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.min.js"></script>
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Prototype</p>
+          <h1>Sand Pixel Sorter</h1>
+        </div>
+        <button id="resetButton" class="reset-button" type="button">重置關卡</button>
+      </header>
+
+      <main class="game-layout">
+        <section class="playfield" aria-label="像素圖">
+          <div class="section-title">
+            <div>
+              <span class="section-kicker">Pixel Grid</span>
+              <h2>像素圖</h2>
+            </div>
+            <span id="phasePill" class="phase-pill is-hidden">進行中</span>
+          </div>
+          <div id="gameCanvas" class="game-canvas" data-testid="game-canvas"></div>
+        </section>
+
+        <aside class="side-panel" aria-label="遊戲控制">
+          <section class="stat-strip is-hidden" aria-label="狀態">
+            <div class="stat-block">
+              <span>剩餘沙粒</span>
+              <strong id="remainingValue">0</strong>
+            </div>
+            <div class="stat-block">
+              <span>回合</span>
+              <strong id="turnValue">0</strong>
+            </div>
+          </section>
+
+          <section class="panel-section is-hidden">
+            <div class="section-heading">桶下方可吸</div>
+            <div id="availableColors" class="swatch-list"></div>
+          </section>
+
+          <section class="panel-section">
+            <div class="section-heading">水桶</div>
+            <div id="bucketPalette" class="bucket-palette"></div>
+          </section>
+
+          <section class="message-panel is-hidden" aria-live="polite">
+            <div id="messageBar" class="message-bar">選擇一個水桶開始。</div>
+            <ol id="eventLog" class="event-log"></ol>
+          </section>
+        </aside>
+      </main>
+    </div>
+  </body>
+</html>
