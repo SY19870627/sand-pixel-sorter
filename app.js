@@ -15,6 +15,10 @@ const STREAM_SUCK_INTERVAL_MS = 12;
 const IDLE_SCAN_INTERVAL_MS = 48;
 const MAX_NEIGHBOR_DISTURB = 14;
 const SLOT_UI_REFRESH_MS = 140;
+const PARTICLE_SLEEP_THRESHOLD = 24;
+const LOCAL_WAKE_COLUMN_RADIUS = 5;
+const LOCAL_WAKE_ABOVE_ROWS = 26;
+const LOCAL_WAKE_BELOW_ROWS = 3;
 
 const COLOR_DATA = {
   red: { label: "紅", hex: "#df5148", value: 0xdf5148 },
@@ -484,9 +488,12 @@ class SandSorterScene extends Phaser.Scene {
       restitution: 0.005,
       density: 0.0022,
       slop: 0.02,
+      sleepThreshold: PARTICLE_SLEEP_THRESHOLD,
     });
     ball.setBounce(0.005);
     ball.setFriction(0.82, 0.92, 0.045);
+    // 初始沙畫已經排成完整圖像，先讓剛體休眠，等底層被吸走時再局部喚醒。
+    this.setBodySleeping(ball.body, true);
 
     particle.sprite = ball;
     particle.x = ball.x;
@@ -680,12 +687,60 @@ class SandSorterScene extends Phaser.Scene {
         y: Phaser.Math.FloatBetween(-0.00025, 0.00005),
       };
 
+      this.wakeBody(particle.sprite.body);
       if (typeof particle.sprite.applyForce === "function") {
         particle.sprite.applyForce(force);
       } else {
         this.matter.body.applyForce(particle.sprite.body, particle.sprite.body.position, force);
       }
       disturbedCount += 1;
+    }
+  }
+
+  getMatterSleepingApi() {
+    return Phaser?.Physics?.Matter?.Matter?.Sleeping ?? window.Matter?.Sleeping ?? null;
+  }
+
+  setBodySleeping(body, isSleeping) {
+    if (!body) {
+      return;
+    }
+
+    const sleepingApi = this.getMatterSleepingApi();
+    if (sleepingApi?.set) {
+      sleepingApi.set(body, isSleeping);
+      return;
+    }
+
+    // Phaser 版本若沒有暴露 Matter.Sleeping API，仍保底直接同步 body 的睡眠旗標。
+    body.isSleeping = isSleeping;
+    body.sleepCounter = isSleeping ? body.sleepThreshold ?? PARTICLE_SLEEP_THRESHOLD : 0;
+  }
+
+  wakeBody(body) {
+    this.setBodySleeping(body, false);
+  }
+
+  wakeLocalSand(originPosition, excludedParticleId = null) {
+    const halfWidth = this.ballSpacing * LOCAL_WAKE_COLUMN_RADIUS;
+    const minX = originPosition.x - halfWidth;
+    const maxX = originPosition.x + halfWidth;
+    const minY = Math.max(this.boardY, originPosition.y - this.ballSpacing * LOCAL_WAKE_ABOVE_ROWS);
+    const maxY = Math.min(this.boardBottom + this.ballRadius * 2, originPosition.y + this.ballSpacing * LOCAL_WAKE_BELOW_ROWS);
+
+    for (const particle of gameState.field.particles) {
+      if (particle.id === excludedParticleId || particle.state !== "active" || !particle.sprite) {
+        continue;
+      }
+
+      const particleX = particle.sprite.x;
+      const particleY = particle.sprite.y;
+      if (particleX < minX || particleX > maxX || particleY < minY || particleY > maxY) {
+        continue;
+      }
+
+      // 只喚醒吸收點附近的沙球，讓支撐被抽掉後上方沙子能接續流動。
+      this.wakeBody(particle.sprite.body);
     }
   }
 
@@ -721,6 +776,7 @@ class SandSorterScene extends Phaser.Scene {
     }
 
     const fromPosition = { x: sprite.x, y: sprite.y };
+    this.wakeLocalSand(fromPosition, particle.id);
     this.disturbNeighbors(particle);
     gameState.field.markSucked(particle);
 
@@ -983,8 +1039,8 @@ function bootPhaser() {
       default: "matter",
       matter: {
         gravity: { y: 0.72 },
-        // 沙子不能進入物理休眠；底層被吸走後，上方沙粒必須立刻受重力影響往下流。
-        enableSleeping: false,
+        // 允許沙子靜止後休眠；吸收時只喚醒局部沙球，避免全場剛體一起更新。
+        enableSleeping: true,
         debug: false,
         positionIterations: 4,
         velocityIterations: 3,
