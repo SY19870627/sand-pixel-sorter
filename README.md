@@ -38,3 +38,59 @@ D:\Git\Idle Sand Sorting\index.html
 - 本原型每吸一層算 `10` 單位，水桶容量是 `100`。
 - 水桶滿 `100/100` 後會消失並釋放槽位。
 - 若 5 個槽位全滿，且沒有任何水桶顏色符合目前底層可吸顏色，判定死鎖。
+
+## 下一階段效能計畫
+
+目前版本讓每顆細沙都建立 Matter 圓形剛體。這能快速做出重力、碰撞與滾動感，但當沙粒數量增加時，效能會明顯下降。後續優化請依序執行，不建議直接跳到大型重構。
+
+### 階段 1：Matter 局部休眠 / 局部喚醒
+
+- [ ] 建議分支：`perf/local-wakeup`
+- [ ] 重新開啟 Matter sleeping，避免全場靜止沙球每幀都跑物理。
+- [ ] 每次吸走沙子後，只喚醒吸收點上方與附近幾列沙球。
+- [ ] 使用 `Matter.Sleeping.set(body, false)` 喚醒局部 body。
+- [ ] 驗證沙子仍會往下掉。
+- [ ] 驗證玩家能連續放桶。
+- [ ] 驗證效能不能比全場不休眠更差。
+- [ ] 完成後提交 commit。
+
+下次執行提示詞：
+
+```text
+請建立 Git 分支 perf/local-wakeup，實作 Sand Pixel Sorter 的 Matter 局部休眠與局部喚醒。保留目前球體沙子玩法，重新開啟 enableSleeping，但在每次吸走沙子後，用 Matter.Sleeping.set(body, false) 只喚醒吸收點上方與附近幾列沙球。完成後請測試沙子會往下掉、連續放桶正常、效能不能比全場不休眠更差，最後做一個 commit。
+```
+
+### 階段 2：混合架構，只讓可動沙子進 Matter
+
+- [ ] 建議分支：`perf/hybrid-sand-bodies`
+- [ ] 靜止沙畫不要全部建立 Matter body，改用輕量方式渲染。
+- [ ] 桶子吸走底層沙子後，只把該欄位與附近會鬆動的沙子轉成 Matter 球體。
+- [ ] 沙子落定後，再寫回靜態沙畫資料。
+- [ ] 保留目前輸送帶、水桶吸收、連續吸沙邏輯。
+- [ ] 驗證畫面仍像沙子流動。
+- [ ] 驗證場上的 Matter 物件數大幅下降。
+- [ ] 完成後提交 commit。
+
+下次執行提示詞：
+
+```text
+請建立 Git 分支 perf/hybrid-sand-bodies，將 Sand Pixel Sorter 改成混合架構：靜止沙畫不要全部建立 Matter body，只用輕量方式渲染；當桶子吸走底層沙子後，才把該欄位與附近會鬆動的沙子轉成 Matter 球體。沙子落定後再寫回靜態沙畫資料。請保留目前輸送帶、水桶吸收、連續吸沙邏輯，完成後測試並 commit。
+```
+
+### 階段 3：Active-Set Cellular Automata 正式沙流核心
+
+- [ ] 建議分支：`engine/active-set-ca`
+- [ ] 將沙畫本體改成 `grid` 儲存。
+- [ ] 每次吸沙只把受影響欄位與鄰近欄位加入 `active queue`。
+- [ ] 每幀只更新 active cells。
+- [ ] 沙流規則優先順序為：下、左下、右下。
+- [ ] 視覺上仍要像細小圓形沙粒，不要回到大格子感。
+- [ ] 保留輸送帶與水桶 X 軸吸收邏輯。
+- [ ] 驗證支援更細沙粒且效能穩定。
+- [ ] 完成後提交 commit。
+
+下次執行提示詞：
+
+```text
+請建立 Git 分支 engine/active-set-ca，將 Sand Pixel Sorter 的沙子模擬核心重構為 Active-Set Cellular Automata。沙畫使用 grid 儲存，每次吸沙只把受影響欄位與鄰近欄位加入 active queue，每幀只更新 active cells，流動規則為下、左下、右下。視覺上仍要像細小圓形沙粒，不要回到大格子感。保留輸送帶與水桶 X 軸吸收邏輯，完成後測試並 commit。
+```
