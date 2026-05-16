@@ -3,6 +3,13 @@ const BUCKET_CAPACITY = 100;
 const SLOT_COUNT = 5;
 const SOURCE_IMAGE_SIZE = 128;
 const BELT_SPEED_MULTIPLIERS = [1, 2, 3];
+const GRAVITY_DIRECTIONS = ["down", "right", "up", "left"];
+const GRAVITY_VECTORS = {
+  down: { x: 0, y: 1, label: "下" },
+  right: { x: 1, y: 0, label: "右" },
+  up: { x: 0, y: -1, label: "上" },
+  left: { x: -1, y: 0, label: "左" },
+};
 const SUCK_TWEEN_MS = 68;
 const SUCK_TRAIL_MS = 120;
 const SUCK_TRAIL_COUNT = 7;
@@ -55,6 +62,7 @@ const RGBA_BY_COLOR_ID = (() => {
 })();
 
 const elements = {
+  gravityButton: document.querySelector("#gravityButton"),
   beltSpeedButton: document.querySelector("#beltSpeedButton"),
   resetButton: document.querySelector("#resetButton"),
   phasePill: document.querySelector("#phasePill"),
@@ -154,6 +162,10 @@ function currentBeltSpeed() {
   return BELT_SPEED_PX_PER_SECOND * beltSpeedMultiplier();
 }
 
+function gravityLabel(direction) {
+  return GRAVITY_VECTORS[direction]?.label ?? GRAVITY_VECTORS.down.label;
+}
+
 function colorId(color) {
   return COLOR_ID_BY_KEY.get(color) ?? EMPTY_COLOR_ID;
 }
@@ -162,12 +174,16 @@ function colorFromId(id) {
   return COLOR_KEY_BY_ID[id] ?? null;
 }
 
-class SandField {
+class SandEngine {
   constructor(rows) {
     this.height = rows.length;
     this.width = rows[0]?.length ?? 0;
     this.colorGrid = new Uint8Array(this.width * this.height);
     this.remainingTotal = 0;
+    this.activeCells = new Set();
+    this.dirtyCells = new Set();
+    this.sandAccumulator = 0;
+    this.gravityDirection = "down";
 
     rows.forEach((row, rowIndex) => {
       if (row.length !== this.width) {
@@ -182,6 +198,8 @@ class SandField {
         }
       });
     });
+
+    this.markAllDirty();
   }
 
   index(cellX, cellY) {
@@ -222,6 +240,70 @@ class SandField {
     return this.isInsideCell(cellX, cellY) && this.getCell(cellX, cellY) === EMPTY_COLOR_ID;
   }
 
+  markDirty(index) {
+    if (this.isInsideIndex(index)) {
+      this.dirtyCells.add(index);
+    }
+  }
+
+  markAllDirty() {
+    for (let index = 0; index < this.colorGrid.length; index += 1) {
+      this.dirtyCells.add(index);
+    }
+  }
+
+  hasDirtyCells() {
+    return this.dirtyCells.size > 0;
+  }
+
+  consumeDirtyCells() {
+    const cells = [...this.dirtyCells];
+    this.dirtyCells.clear();
+    return cells;
+  }
+
+  resetDynamics() {
+    this.activeCells.clear();
+    this.dirtyCells.clear();
+    this.sandAccumulator = 0;
+  }
+
+  gravityVector(direction = this.gravityDirection) {
+    return GRAVITY_VECTORS[direction] ?? GRAVITY_VECTORS.down;
+  }
+
+  sideVector() {
+    const gravity = this.gravityVector();
+    return { x: gravity.y, y: -gravity.x };
+  }
+
+  sideAxis() {
+    const side = this.sideVector();
+    return side.x !== 0 ? "x" : "y";
+  }
+
+  lineLimit() {
+    return this.sideAxis() === "x" ? this.width - 1 : this.height - 1;
+  }
+
+  gravityDepth(index) {
+    const gravity = this.gravityVector();
+    return this.cellX(index) * gravity.x + this.cellY(index) * gravity.y;
+  }
+
+  lineCoordinateForCell(cellX, cellY) {
+    return this.sideAxis() === "x" ? cellX : cellY;
+  }
+
+  cellAtDirectionalOffset(cellX, cellY, sideOffset, gravityOffset) {
+    const side = this.sideVector();
+    const gravity = this.gravityVector();
+    return {
+      x: cellX + side.x * sideOffset + gravity.x * gravityOffset,
+      y: cellY + side.y * sideOffset + gravity.y * gravityOffset,
+    };
+  }
+
   clearIndex(index) {
     if (!this.isInsideIndex(index) || this.colorGrid[index] === EMPTY_COLOR_ID) {
       return false;
@@ -229,6 +311,7 @@ class SandField {
 
     this.colorGrid[index] = EMPTY_COLOR_ID;
     this.remainingTotal = Math.max(0, this.remainingTotal - SAND_UNIT_VALUE);
+    this.markDirty(index);
     return true;
   }
 
@@ -244,6 +327,295 @@ class SandField {
 
     this.colorGrid[toIndex] = color;
     this.colorGrid[fromIndex] = EMPTY_COLOR_ID;
+    this.markDirty(fromIndex);
+    this.markDirty(toIndex);
+    return true;
+  }
+
+  activateCell(cellX, cellY) {
+    if (!this.isInsideCell(cellX, cellY)) {
+      return;
+    }
+    this.activeCells.add(this.index(cellX, cellY));
+  }
+
+  activateCellNeighborhood(cellX, cellY) {
+    // 使用重力座標系喚醒鄰近沙粒，讓旋轉重力後仍能沿新方向補位。
+    for (let gravityOffset = -2; gravityOffset <= 1; gravityOffset += 1) {
+      for (let sideOffset = -1; sideOffset <= 1; sideOffset += 1) {
+        const cell = this.cellAtDirectionalOffset(cellX, cellY, sideOffset, gravityOffset);
+        this.activateCell(cell.x, cell.y);
+      }
+    }
+  }
+
+  wakeLocalSand(cellX, cellY) {
+    for (let gravityOffset = -WAKE_ABOVE_ROWS; gravityOffset <= WAKE_BELOW_ROWS; gravityOffset += 1) {
+      for (let sideOffset = -WAKE_COLUMN_RADIUS; sideOffset <= WAKE_COLUMN_RADIUS; sideOffset += 1) {
+        const cell = this.cellAtDirectionalOffset(cellX, cellY, sideOffset, gravityOffset);
+        this.activateCell(cell.x, cell.y);
+      }
+    }
+  }
+
+  wakeArea(left, top, right, bottom) {
+    const minX = clampInteger(Math.min(left, right), 0, this.width - 1);
+    const maxX = clampInteger(Math.max(left, right), 0, this.width - 1);
+    const minY = clampInteger(Math.min(top, bottom), 0, this.height - 1);
+    const maxY = clampInteger(Math.max(top, bottom), 0, this.height - 1);
+
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        this.activateCell(x, y);
+      }
+    }
+  }
+
+  getOuterSandIndexOnLine(lineCoordinate) {
+    const line = clampInteger(lineCoordinate, 0, this.lineLimit());
+    const gravity = this.gravityVector();
+
+    if (this.sideAxis() === "x") {
+      if (gravity.y > 0) {
+        for (let y = this.height - 1; y >= 0; y -= 1) {
+          const index = this.index(line, y);
+          if (this.getIndex(index) !== EMPTY_COLOR_ID) {
+            return index;
+          }
+        }
+      } else {
+        for (let y = 0; y < this.height; y += 1) {
+          const index = this.index(line, y);
+          if (this.getIndex(index) !== EMPTY_COLOR_ID) {
+            return index;
+          }
+        }
+      }
+      return null;
+    }
+
+    if (gravity.x > 0) {
+      for (let x = this.width - 1; x >= 0; x -= 1) {
+        const index = this.index(x, line);
+        if (this.getIndex(index) !== EMPTY_COLOR_ID) {
+          return index;
+        }
+      }
+    } else {
+      for (let x = 0; x < this.width; x += 1) {
+        const index = this.index(x, line);
+        if (this.getIndex(index) !== EMPTY_COLOR_ID) {
+          return index;
+        }
+      }
+    }
+    return null;
+  }
+
+  availableColorsInLineRange(minLine, maxLine) {
+    const colors = new Set();
+    const min = clampInteger(Math.min(minLine, maxLine), 0, this.lineLimit());
+    const max = clampInteger(Math.max(minLine, maxLine), 0, this.lineLimit());
+
+    for (let line = min; line <= max; line += 1) {
+      const index = this.getOuterSandIndexOnLine(line);
+      if (index === null) {
+        continue;
+      }
+
+      const color = colorFromId(this.getIndex(index));
+      if (color !== null) {
+        colors.add(color);
+      }
+    }
+
+    return colors;
+  }
+
+  findAbsorbableCellInLineRange(targetColorId, minLine, maxLine, reservedCellIndices = new Set(), preferredLine = null) {
+    const min = clampInteger(Math.min(minLine, maxLine), 0, this.lineLimit());
+    const max = clampInteger(Math.max(minLine, maxLine), 0, this.lineLimit());
+    const centerLine = preferredLine ?? (min + max) / 2;
+    let bestCell = null;
+    let bestDepth = -Infinity;
+    let bestDistance = Infinity;
+
+    for (let line = min; line <= max; line += 1) {
+      const index = this.getOuterSandIndexOnLine(line);
+      if (index === null || reservedCellIndices.has(index) || this.getIndex(index) !== targetColorId) {
+        continue;
+      }
+
+      const cellX = this.cellX(index);
+      const cellY = this.cellY(index);
+      const depth = this.gravityDepth(index);
+      const distance = Math.abs(line - centerLine);
+      if (depth > bestDepth || (depth === bestDepth && distance < bestDistance)) {
+        bestCell = {
+          index,
+          id: index,
+          cellX,
+          cellY,
+          colorId: targetColorId,
+        };
+        bestDepth = depth;
+        bestDistance = distance;
+      }
+    }
+
+    return bestCell;
+  }
+
+  tryMoveCell(index) {
+    const color = this.getIndex(index);
+    if (color === EMPTY_COLOR_ID) {
+      return false;
+    }
+
+    const cellX = this.cellX(index);
+    const cellY = this.cellY(index);
+    const diagonalOrder = Math.random() < 0.5 ? [-1, 1] : [1, -1];
+    const candidates = [
+      this.cellAtDirectionalOffset(cellX, cellY, 0, 1),
+      ...diagonalOrder.map((sideOffset) => this.cellAtDirectionalOffset(cellX, cellY, sideOffset, 1)),
+    ];
+
+    for (const candidate of candidates) {
+      if (!this.isCellEmpty(candidate.x, candidate.y)) {
+        continue;
+      }
+
+      const targetIndex = this.index(candidate.x, candidate.y);
+      if (!this.moveIndex(index, targetIndex)) {
+        continue;
+      }
+
+      this.activateCellNeighborhood(cellX, cellY);
+      this.activateCellNeighborhood(candidate.x, candidate.y);
+      return true;
+    }
+
+    return false;
+  }
+
+  stepActiveSand() {
+    if (this.activeCells.size === 0) {
+      return false;
+    }
+
+    const activeCells = [...this.activeCells].sort((a, b) => {
+      const depthDelta = this.gravityDepth(b) - this.gravityDepth(a);
+      return depthDelta !== 0 ? depthDelta : Math.random() - 0.5;
+    });
+    this.activeCells.clear();
+
+    let movedAny = false;
+    let processed = 0;
+    for (const index of activeCells) {
+      if (processed >= ACTIVE_CELL_BUDGET) {
+        this.activeCells.add(index);
+        continue;
+      }
+
+      processed += 1;
+      movedAny = this.tryMoveCell(index) || movedAny;
+    }
+
+    return movedAny;
+  }
+
+  update(delta) {
+    this.sandAccumulator += delta;
+    let stepped = false;
+    let stepCount = 0;
+    while (this.sandAccumulator >= SAND_STEP_MS && stepCount < SAND_STEPS_PER_FRAME) {
+      this.sandAccumulator -= SAND_STEP_MS;
+      stepped = this.stepActiveSand() || stepped;
+      stepCount += 1;
+    }
+    return stepped;
+  }
+
+  eraseCircle(centerX, centerY, radius) {
+    const minX = clampInteger(centerX - radius, 0, this.width - 1);
+    const maxX = clampInteger(centerX + radius, 0, this.width - 1);
+    const minY = clampInteger(centerY - radius, 0, this.height - 1);
+    const maxY = clampInteger(centerY + radius, 0, this.height - 1);
+    const radiusSquared = radius * radius;
+
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const dx = x - centerX;
+        const dy = y - centerY;
+        if (dx * dx + dy * dy <= radiusSquared) {
+          this.clearIndex(this.index(x, y));
+        }
+      }
+    }
+
+    this.wakeArea(minX - 1, minY - 1, maxX + 1, maxY + 1);
+  }
+
+  recolorArea(centerX, centerY, radius, color) {
+    const targetColorId = colorId(color);
+    if (targetColorId === EMPTY_COLOR_ID) {
+      return;
+    }
+
+    const minX = clampInteger(centerX - radius, 0, this.width - 1);
+    const maxX = clampInteger(centerX + radius, 0, this.width - 1);
+    const minY = clampInteger(centerY - radius, 0, this.height - 1);
+    const maxY = clampInteger(centerY + radius, 0, this.height - 1);
+    const radiusSquared = radius * radius;
+
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const index = this.index(x, y);
+        const dx = x - centerX;
+        const dy = y - centerY;
+        if (dx * dx + dy * dy <= radiusSquared && this.getIndex(index) !== EMPTY_COLOR_ID) {
+          this.colorGrid[index] = targetColorId;
+          this.markDirty(index);
+        }
+      }
+    }
+
+    this.wakeArea(minX - 1, minY - 1, maxX + 1, maxY + 1);
+  }
+
+  spawnSandRect(left, top, right, bottom, color) {
+    const targetColorId = colorId(color);
+    if (targetColorId === EMPTY_COLOR_ID) {
+      return;
+    }
+
+    const minX = clampInteger(Math.min(left, right), 0, this.width - 1);
+    const maxX = clampInteger(Math.max(left, right), 0, this.width - 1);
+    const minY = clampInteger(Math.min(top, bottom), 0, this.height - 1);
+    const maxY = clampInteger(Math.max(top, bottom), 0, this.height - 1);
+
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const index = this.index(x, y);
+        if (this.getIndex(index) === EMPTY_COLOR_ID) {
+          this.remainingTotal += SAND_UNIT_VALUE;
+        }
+        this.colorGrid[index] = targetColorId;
+        this.markDirty(index);
+        this.activateCell(x, y);
+      }
+    }
+
+    this.wakeArea(minX - 1, minY - 1, maxX + 1, maxY + 1);
+  }
+
+  rotateGravity(direction) {
+    if (!GRAVITY_DIRECTIONS.includes(direction) || direction === this.gravityDirection) {
+      return false;
+    }
+
+    this.gravityDirection = direction;
+    this.wakeArea(0, 0, this.width - 1, this.height - 1);
     return true;
   }
 
@@ -316,7 +688,7 @@ class Conveyor {
 
 class GameState {
   constructor(rows) {
-    this.field = new SandField(rows);
+    this.field = new SandEngine(rows);
     this.conveyor = new Conveyor(SLOT_COUNT);
     this.phase = "running";
     this.turn = 0;
@@ -430,9 +802,6 @@ class SandSorterScene extends Phaser.Scene {
     this.sandImage = null;
     this.sandImageData = null;
     this.sandPixels = null;
-    this.activeCells = new Set();
-    this.dirtyCells = new Set();
-    this.sandAccumulator = 0;
     this.pixelWorldSize = 1;
     this.effectRadius = 2;
   }
@@ -536,10 +905,8 @@ class SandSorterScene extends Phaser.Scene {
   }
 
   syncFromState(state) {
-    this.activeCells.clear();
-    this.dirtyCells.clear();
-    this.sandAccumulator = 0;
-    this.markAllSandDirty(state.field);
+    state.field.resetDynamics();
+    state.field.markAllDirty();
     this.renderDirtySand();
     this.updateBucketSlots(state.conveyor.slots);
   }
@@ -638,18 +1005,6 @@ class SandSorterScene extends Phaser.Scene {
       .sort((a, b) => a.x - b.x)[0]?.slotIndex ?? -1;
   }
 
-  markAllSandDirty(field) {
-    for (let index = 0; index < field.colorGrid.length; index += 1) {
-      this.dirtyCells.add(index);
-    }
-  }
-
-  markDirty(index) {
-    if (gameState.field.isInsideIndex(index)) {
-      this.dirtyCells.add(index);
-    }
-  }
-
   writePixel(index) {
     const color = gameState.field.getIndex(index);
     const rgba = RGBA_BY_COLOR_ID[color] ?? RGBA_BY_COLOR_ID[EMPTY_COLOR_ID];
@@ -661,12 +1016,11 @@ class SandSorterScene extends Phaser.Scene {
   }
 
   renderDirtySand() {
-    if (this.dirtyCells.size === 0 || !this.sandTexture) {
+    if (!this.sandTexture || !gameState.field.hasDirtyCells()) {
       return;
     }
 
-    this.dirtyCells.forEach((index) => this.writePixel(index));
-    this.dirtyCells.clear();
+    gameState.field.consumeDirtyCells().forEach((index) => this.writePixel(index));
     this.sandContext.putImageData(this.sandImageData, 0, 0);
     this.sandTexture.refresh();
   }
@@ -686,22 +1040,21 @@ class SandSorterScene extends Phaser.Scene {
     };
   }
 
-  getBucketColumnRange(slotIndex) {
+  getBucketLineRange(slotIndex) {
     const slotCenter = this.getSlotCenter(slotIndex);
-    return {
-      minX: this.worldXToCellX(slotCenter.x - BUCKET_SUCTION_HALF_WIDTH),
-      maxX: this.worldXToCellX(slotCenter.x + BUCKET_SUCTION_HALF_WIDTH),
-    };
-  }
-
-  getBottomSandIndexInColumn(cellX) {
-    for (let cellY = gameState.field.height - 1; cellY >= 0; cellY -= 1) {
-      const index = gameState.field.index(cellX, cellY);
-      if (gameState.field.getIndex(index) !== EMPTY_COLOR_ID) {
-        return index;
-      }
+    if (gameState.field.sideAxis() === "x") {
+      return {
+        minLine: this.worldXToCellX(slotCenter.x - BUCKET_SUCTION_HALF_WIDTH),
+        maxLine: this.worldXToCellX(slotCenter.x + BUCKET_SUCTION_HALF_WIDTH),
+        centerLine: this.worldXToCellX(slotCenter.x),
+      };
     }
-    return null;
+
+    return {
+      minLine: this.worldYToCellY(slotCenter.y - BUCKET_SUCTION_HALF_WIDTH),
+      maxLine: this.worldYToCellY(slotCenter.y + BUCKET_SUCTION_HALF_WIDTH),
+      centerLine: this.worldYToCellY(slotCenter.y),
+    };
   }
 
   getAvailableColorsInSuctionZone() {
@@ -711,18 +1064,8 @@ class SandSorterScene extends Phaser.Scene {
         return;
       }
 
-      const { minX, maxX } = this.getBucketColumnRange(slotIndex);
-      for (let cellX = minX; cellX <= maxX; cellX += 1) {
-        const index = this.getBottomSandIndexInColumn(cellX);
-        if (index === null) {
-          continue;
-        }
-
-        const color = colorFromId(gameState.field.getIndex(index));
-        if (color !== null) {
-          colors.add(color);
-        }
-      }
+      const { minLine, maxLine } = this.getBucketLineRange(slotIndex);
+      gameState.field.availableColorsInLineRange(minLine, maxLine).forEach((color) => colors.add(color));
     });
 
     return [...colors];
@@ -743,136 +1086,25 @@ class SandSorterScene extends Phaser.Scene {
     }
 
     const targetColorId = colorId(color);
-    const slotCenter = this.getSlotCenter(slotIndex);
-    const { minX, maxX } = this.getBucketColumnRange(slotIndex);
-    let bestCell = null;
-    let bestY = -Infinity;
-    let bestDistance = Infinity;
+    const { minLine, maxLine, centerLine } = this.getBucketLineRange(slotIndex);
+    const cell = gameState.field.findAbsorbableCellInLineRange(
+      targetColorId,
+      minLine,
+      maxLine,
+      reservedCellIndices,
+      centerLine
+    );
 
-    for (let cellX = minX; cellX <= maxX; cellX += 1) {
-      const index = this.getBottomSandIndexInColumn(cellX);
-      if (index === null || reservedCellIndices.has(index) || gameState.field.getIndex(index) !== targetColorId) {
-        continue;
-      }
-
-      const cellY = gameState.field.cellY(index);
-      const worldPosition = this.cellToWorldPosition(cellX, cellY);
-      const distance = Math.abs(worldPosition.x - slotCenter.x);
-      if (cellY > bestY || (cellY === bestY && distance < bestDistance)) {
-        bestCell = {
-          index,
-          id: index,
-          cellX,
-          cellY,
-          color,
-          colorId: targetColorId,
-        };
-        bestY = cellY;
-        bestDistance = distance;
-      }
+    if (cell === null) {
+      return null;
     }
 
-    return bestCell;
-  }
-
-  activateCell(cellX, cellY) {
-    if (!gameState.field.isInsideCell(cellX, cellY)) {
-      return;
-    }
-    this.activeCells.add(gameState.field.index(cellX, cellY));
-  }
-
-  activateCellNeighborhood(cellX, cellY) {
-    for (let offsetY = -2; offsetY <= 1; offsetY += 1) {
-      for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
-        this.activateCell(cellX + offsetX, cellY + offsetY);
-      }
-    }
-  }
-
-  wakeLocalSand(cellX, cellY) {
-    for (let y = cellY - WAKE_ABOVE_ROWS; y <= cellY + WAKE_BELOW_ROWS; y += 1) {
-      for (let x = cellX - WAKE_COLUMN_RADIUS; x <= cellX + WAKE_COLUMN_RADIUS; x += 1) {
-        this.activateCell(x, y);
-      }
-    }
-  }
-
-  tryMoveCell(index) {
-    const color = gameState.field.getIndex(index);
-    if (color === EMPTY_COLOR_ID) {
-      return false;
-    }
-
-    const cellX = gameState.field.cellX(index);
-    const cellY = gameState.field.cellY(index);
-    if (cellY >= gameState.field.height - 1) {
-      return false;
-    }
-
-    const candidates = [{ x: cellX, y: cellY + 1 }];
-    const diagonalOrder = Phaser.Math.Between(0, 1) === 0 ? [-1, 1] : [1, -1];
-    diagonalOrder.forEach((direction) => {
-      candidates.push({ x: cellX + direction, y: cellY + 1 });
-    });
-
-    for (const candidate of candidates) {
-      if (!gameState.field.isCellEmpty(candidate.x, candidate.y)) {
-        continue;
-      }
-
-      const targetIndex = gameState.field.index(candidate.x, candidate.y);
-      if (!gameState.field.moveIndex(index, targetIndex)) {
-        continue;
-      }
-
-      this.markDirty(index);
-      this.markDirty(targetIndex);
-      this.activateCellNeighborhood(cellX, cellY);
-      this.activateCellNeighborhood(candidate.x, candidate.y);
-      return true;
-    }
-
-    return false;
-  }
-
-  stepActiveSand() {
-    if (this.activeCells.size === 0) {
-      return false;
-    }
-
-    const activeCells = [...this.activeCells].sort((a, b) => {
-      const rowDelta = gameState.field.cellY(b) - gameState.field.cellY(a);
-      return rowDelta !== 0 ? rowDelta : Phaser.Math.Between(-1, 1);
-    });
-    this.activeCells.clear();
-
-    let movedAny = false;
-    let processed = 0;
-    for (const index of activeCells) {
-      if (processed >= ACTIVE_CELL_BUDGET) {
-        this.activeCells.add(index);
-        continue;
-      }
-
-      processed += 1;
-      movedAny = this.tryMoveCell(index) || movedAny;
-    }
-
-    return movedAny;
+    return { ...cell, color };
   }
 
   updateSandAutomata(delta) {
-    this.sandAccumulator += delta;
-    let stepped = false;
-    let stepCount = 0;
-    while (this.sandAccumulator >= SAND_STEP_MS && stepCount < SAND_STEPS_PER_FRAME) {
-      this.sandAccumulator -= SAND_STEP_MS;
-      stepped = this.stepActiveSand() || stepped;
-      stepCount += 1;
-    }
-
-    if (stepped || this.dirtyCells.size > 0) {
+    const stepped = gameState.field.update(delta);
+    if (stepped || gameState.field.hasDirtyCells()) {
       this.renderDirtySand();
     }
   }
@@ -909,9 +1141,8 @@ class SandSorterScene extends Phaser.Scene {
       return;
     }
 
-    this.markDirty(cell.index);
-    this.activateCellNeighborhood(cell.cellX, cell.cellY);
-    this.wakeLocalSand(cell.cellX, cell.cellY);
+    gameState.field.activateCellNeighborhood(cell.cellX, cell.cellY);
+    gameState.field.wakeLocalSand(cell.cellX, cell.cellY);
     this.renderDirtySand();
     this.spawnAbsorbParticles(fromPosition, slotCenter, cell.color);
 
@@ -1014,6 +1245,29 @@ function cycleBeltSpeed() {
   renderBeltSpeedButton();
 }
 
+function renderGravityButton() {
+  if (!elements.gravityButton) {
+    return;
+  }
+
+  const direction = gameState?.field.gravityDirection ?? "down";
+  const label = gravityLabel(direction);
+  elements.gravityButton.textContent = `重力 ${label}`;
+  elements.gravityButton.setAttribute("aria-label", `目前重力方向 ${label}，點擊切換方向`);
+}
+
+function cycleGravityDirection() {
+  if (!gameState?.field) {
+    return;
+  }
+
+  const currentIndex = GRAVITY_DIRECTIONS.indexOf(gameState.field.gravityDirection);
+  const nextDirection = GRAVITY_DIRECTIONS[(currentIndex + 1) % GRAVITY_DIRECTIONS.length] ?? "down";
+  gameState.field.rotateGravity(nextDirection);
+  renderGravityButton();
+  sceneRef?.renderDirtySand();
+}
+
 function renderPhase() {
   const label = {
     running: "進行中",
@@ -1030,6 +1284,7 @@ function renderUI({ updateSlots = true } = {}) {
   elements.remainingValue.textContent = gameState.field.remainingTotal;
   elements.turnValue.textContent = gameState.turn;
   renderPhase();
+  renderGravityButton();
   renderAvailableColors();
   renderBucketPalette();
   if (updateSlots) {
@@ -1201,6 +1456,8 @@ function bootPhaser() {
 }
 
 renderBeltSpeedButton();
+renderGravityButton();
+elements.gravityButton?.addEventListener("click", cycleGravityDirection);
 elements.beltSpeedButton?.addEventListener("click", cycleBeltSpeed);
 elements.resetButton.addEventListener("click", resetGame);
 bootPhaser();

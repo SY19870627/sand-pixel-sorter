@@ -82,6 +82,7 @@ h2 {
 }
 
 .reset-button,
+.gravity-button,
 .speed-button,
 .bucket-button {
   border: 1px solid var(--line);
@@ -96,12 +97,14 @@ h2 {
 }
 
 .reset-button,
+.gravity-button,
 .speed-button {
   padding: 10px 14px;
   font-weight: 700;
 }
 
 .reset-button:hover,
+.gravity-button:hover,
 .speed-button:hover,
 .bucket-button:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--accent) 56%, var(--line));
@@ -109,11 +112,17 @@ h2 {
   transform: translateY(-1px);
 }
 
+.gravity-button,
 .speed-button {
   min-width: 112px;
   color: #ffffff;
   background: #267f78;
   border-color: #267f78;
+}
+
+.gravity-button {
+  background: #7b4a32;
+  border-color: #7b4a32;
 }
 
 .game-layout {
@@ -582,6 +591,7 @@ h2 {
 
   .topbar-actions,
   .reset-button,
+  .gravity-button,
   .speed-button {
     width: 100%;
   }

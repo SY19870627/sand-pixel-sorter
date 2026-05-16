@@ -20,6 +20,7 @@ D:\Git\Idle Sand Sorting\index.html
 - 畫面只顯示一張低解析度 CanvasTexture，並用 nearest-neighbor / `image-rendering: pixelated` 放大。
 - 水桶只吸「該桶目前 X 軸正上方」底部可接觸的同色 pixel。
 - 吸走一顆沙後，只把受影響區域加入 active queue，沙子依照下、左下、右下規則流動。
+- 沙子邏輯已抽離為 `SandEngine`，可切換 `down / right / up / left` 重力方向。
 
 ## 原型規則
 
@@ -34,6 +35,7 @@ D:\Git\Idle Sand Sorting\index.html
 - 吸收採用串流判定：第一顆吸入動畫尚未結束時，約每 `8ms` 會重新判斷是否能接著吸下一顆。
 - 輸送帶槽位會持續往右移動，超過最右側後循環回到最左側。
 - 上方的輸送帶速度按鈕可在 `x1 / x2 / x3` 間切換。
+- 上方的重力按鈕可切換沙流方向，用於測試旋轉畫框前的重力邏輯。
 - 輸送帶左右兩側有最上層遮罩，隱藏桶子循環回到左側的瞬間位移。
 - 放桶時會選擇畫面上 X 座標最左邊的空槽，而不是槽位編號最小的空槽。
 - 右側介面已極簡化，只保留水桶按鈕。
@@ -55,23 +57,23 @@ D:\Git\Idle Sand Sorting\index.html
 
 任務清單：
 
-- [ ] 建立 `SandEngine` 類別，接管 `colorGrid`、`width`、`height`、`remainingTotal`。
-- [ ] 將 `SandField` 中的 grid 操作搬入 `SandEngine`，包含 `index`、`cellX`、`cellY`、`getIndex`、`clearIndex`、`moveIndex`。
-- [ ] 將 `activeCells`、`dirtyCells` 與沙流步進邏輯移入 `SandEngine`。
-- [ ] 讓 Phaser 場景改用 `engine.consumeDirtyCells()` 取得要重繪的 pixel。
-- [ ] 建立 `gravityDirection`，支援 `down`、`left`、`up`、`right`。
-- [ ] 改寫沙流規則，依照目前 gravity 計算「正下方」、「左斜下」、「右斜下」。
-- [ ] 改寫底層查詢，讓吸沙不再只看固定 X 軸，而是依 gravity 查詢可接觸的外層沙。
-- [ ] 保留目前水桶對應畫框座標的吸沙規則，確保未旋轉時行為不變。
-- [ ] 建立 engine command 介面，例如 `eraseCircle`、`recolorArea`、`wakeArea`、`rotateGravity`、`spawnSandRect`。
-- [ ] 實作 `rotateGravity(direction)`，先只旋轉重力，不旋轉美術畫框。
-- [ ] 增加一個簡單測試按鈕或除錯入口，切換重力方向觀察沙流。
-- [ ] 保持水桶、輸送帶、滿桶消除、死鎖判定可正常運作。
-- [ ] 執行 `node --check app.js`。
-- [ ] 使用 `http://127.0.0.1:57512/index.html` 驗證頁面可載入。
-- [ ] 驗證預設重力下，放桶吸沙行為與目前版本一致。
-- [ ] 驗證切換重力後，沙子會沿新方向流動。
-- [ ] 完成後提交 commit。
+- [x] 建立 `SandEngine` 類別，接管 `colorGrid`、`width`、`height`、`remainingTotal`。
+- [x] 將 `SandField` 中的 grid 操作搬入 `SandEngine`，包含 `index`、`cellX`、`cellY`、`getIndex`、`clearIndex`、`moveIndex`。
+- [x] 將 `activeCells`、`dirtyCells` 與沙流步進邏輯移入 `SandEngine`。
+- [x] 讓 Phaser 場景改用 `engine.consumeDirtyCells()` 取得要重繪的 pixel。
+- [x] 建立 `gravityDirection`，支援 `down`、`left`、`up`、`right`。
+- [x] 改寫沙流規則，依照目前 gravity 計算「正下方」、「左斜下」、「右斜下」。
+- [x] 改寫底層查詢，讓吸沙不再只看固定 X 軸，而是依 gravity 查詢可接觸的外層沙。
+- [x] 保留目前水桶對應畫框座標的吸沙規則，確保未旋轉時行為不變。
+- [x] 建立 engine command 介面，例如 `eraseCircle`、`recolorArea`、`wakeArea`、`rotateGravity`、`spawnSandRect`。
+- [x] 實作 `rotateGravity(direction)`，先只旋轉重力，不旋轉美術畫框。
+- [x] 增加一個簡單測試按鈕或除錯入口，切換重力方向觀察沙流。
+- [x] 保持水桶、輸送帶、滿桶消除、死鎖判定可正常運作。
+- [x] 執行 `node --check app.js`。
+- [x] 使用 `http://127.0.0.1:57512/index.html` 驗證頁面可載入。
+- [x] 驗證預設重力下，放桶吸沙行為與目前版本一致。
+- [x] 驗證切換重力後，沙子會沿新方向流動。
+- [x] 完成後提交 commit。
 
 下次執行提示詞：
 
