@@ -1,7 +1,7 @@
 const SAND_UNIT_VALUE = 10;
 const BUCKET_CAPACITY = 100;
 const SLOT_COUNT = 5;
-const PIXEL_SCALE = 3;
+const PIXEL_SCALE = 4;
 const SUCTION_ZONE_HEIGHT = 116;
 const SUCK_TWEEN_MS = 68;
 const SUCK_TRAIL_MS = 120;
@@ -362,8 +362,8 @@ class SandSorterScene extends Phaser.Scene {
     this.slotObjects = [];
     this.frameObjects = [];
     this.beltMaskObjects = [];
-    this.ballRadius = 4.05;
-    this.ballSpacing = 8.75;
+    this.ballRadius = 3.08;
+    this.ballSpacing = 6.5;
     this.beltOffset = 0;
     this.slotWidth = 92;
     this.slotGap = 14;
