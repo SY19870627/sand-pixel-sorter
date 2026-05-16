@@ -29,7 +29,7 @@ const WAKE_BELOW_ROWS = 4;
 const EMPTY_COLOR_ID = 0;
 const SAND_TEXTURE_KEY = "sand-bitmap";
 
-const COLOR_DATA = {
+const DEFAULT_COLOR_DATA = {
   red: { label: "紅", hex: "#df5148", value: 0xdf5148 },
   green: { label: "綠", hex: "#37a66b", value: 0x37a66b },
   blue: { label: "藍", hex: "#3f79c8", value: 0x3f79c8 },
@@ -42,12 +42,17 @@ const COLOR_DATA = {
   white: { label: "白", hex: "#f4ead8", value: 0xf4ead8 },
 };
 
-const COLOR_ORDER = ["sky", "brown", "skin", "dark", "white", "red"];
-const BUCKET_COLORS = ["sky", "brown", "skin", "dark", "white", "red"];
-const COLOR_ID_BY_KEY = new Map(COLOR_ORDER.map((color, index) => [color, index + 1]));
-const COLOR_KEY_BY_ID = ["empty", ...COLOR_ORDER];
+let COLOR_DATA = {};
+let COLOR_ORDER = [];
+let BUCKET_COLORS = [];
+let COLOR_ID_BY_KEY = new Map();
+let COLOR_KEY_BY_ID = ["empty"];
+let RGBA_BY_COLOR_ID = [[0, 0, 0, 0]];
 
-const RGBA_BY_COLOR_ID = (() => {
+function rebuildPaletteLookups() {
+  COLOR_ID_BY_KEY = new Map(COLOR_ORDER.map((color, index) => [color, index + 1]));
+  COLOR_KEY_BY_ID = ["empty", ...COLOR_ORDER];
+
   const rgba = [[0, 0, 0, 0]];
   COLOR_ORDER.forEach((color) => {
     const hex = COLOR_DATA[color].hex.replace("#", "");
@@ -58,10 +63,33 @@ const RGBA_BY_COLOR_ID = (() => {
       255,
     ]);
   });
-  return rgba;
-})();
+  RGBA_BY_COLOR_ID = rgba;
+}
+
+function setGamePalette(paletteEntries) {
+  COLOR_DATA = {};
+  COLOR_ORDER = [];
+  BUCKET_COLORS = [];
+
+  paletteEntries.forEach((entry) => {
+    COLOR_DATA[entry.key] = {
+      label: entry.label,
+      hex: entry.hex,
+      value: Number.parseInt(entry.hex.replace("#", ""), 16),
+    };
+    COLOR_ORDER.push(entry.key);
+    BUCKET_COLORS.push(entry.key);
+  });
+
+  rebuildPaletteLookups();
+}
+
+setGamePalette(["sky", "brown", "skin", "dark", "white", "red"].map((key) => ({ key, ...DEFAULT_COLOR_DATA[key] })));
 
 const elements = {
+  imageUploadInput: document.querySelector("#imageUploadInput"),
+  paletteSizeSelect: document.querySelector("#paletteSizeSelect"),
+  uploadStatus: document.querySelector("#uploadStatus"),
   gravityButton: document.querySelector("#gravityButton"),
   beltSpeedButton: document.querySelector("#beltSpeedButton"),
   resetButton: document.querySelector("#resetButton"),
@@ -84,6 +112,7 @@ let lastSlotUiRefreshAt = 0;
 let logItems = [];
 let bucketButtons = new Map();
 let beltSpeedIndex = 0;
+let bucketPaletteSignature = "";
 
 function createFilledPainting(size, color) {
   return Array.from({ length: size }, () => Array(size).fill(color));
@@ -154,7 +183,7 @@ function createSourcePainting() {
   return rows;
 }
 
-const LEVEL_ROWS = createSourcePainting();
+let currentLevelRows = createSourcePainting();
 
 function beltSpeedMultiplier() {
   return BELT_SPEED_MULTIPLIERS[beltSpeedIndex] ?? 1;
@@ -166,6 +195,197 @@ function currentBeltSpeed() {
 
 function gravityLabel(direction) {
   return GRAVITY_VECTORS[direction]?.label ?? GRAVITY_VECTORS.down.label;
+}
+
+function clampPaletteSize(value) {
+  return clampInteger(Number.parseInt(value, 10) || 6, 6, 8);
+}
+
+function rgbToHex(r, g, b) {
+  return `#${[r, g, b].map((value) => clampInteger(value, 0, 255).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function colorDistanceSquared(a, b) {
+  const red = a.r - b.r;
+  const green = a.g - b.g;
+  const blue = a.b - b.b;
+  return red * red + green * green + blue * blue;
+}
+
+function nearestColorIndex(pixel, centers) {
+  let bestIndex = 0;
+  let bestDistance = Infinity;
+  centers.forEach((center, index) => {
+    const distance = colorDistanceSquared(pixel, center);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
+function pixelLuminance(pixel) {
+  return pixel.r * 0.2126 + pixel.g * 0.7152 + pixel.b * 0.0722;
+}
+
+function extractPixelsFromImageData(imageData) {
+  const pixels = [];
+  const fallback = { r: 245, g: 247, b: 242 };
+  for (let offset = 0; offset < imageData.data.length; offset += 4) {
+    const alpha = imageData.data[offset + 3];
+    if (alpha < 24) {
+      pixels.push(fallback);
+      continue;
+    }
+
+    pixels.push({
+      r: imageData.data[offset],
+      g: imageData.data[offset + 1],
+      b: imageData.data[offset + 2],
+    });
+  }
+  return pixels;
+}
+
+function quantizePixels(pixels, requestedColorCount) {
+  const colorCount = clampPaletteSize(requestedColorCount);
+  const sortedPixels = [...pixels].sort((a, b) => pixelLuminance(a) - pixelLuminance(b));
+  let centers = Array.from({ length: colorCount }, (_, index) => {
+    const sampleIndex = Math.min(sortedPixels.length - 1, Math.floor(((index + 0.5) * sortedPixels.length) / colorCount));
+    return { ...sortedPixels[sampleIndex] };
+  });
+
+  for (let iteration = 0; iteration < 12; iteration += 1) {
+    const sums = centers.map(() => ({ r: 0, g: 0, b: 0, count: 0 }));
+    pixels.forEach((pixel) => {
+      const centerIndex = nearestColorIndex(pixel, centers);
+      sums[centerIndex].r += pixel.r;
+      sums[centerIndex].g += pixel.g;
+      sums[centerIndex].b += pixel.b;
+      sums[centerIndex].count += 1;
+    });
+
+    const usedFallbackPixelIndices = new Set();
+    const nextCenters = [];
+    centers.forEach((center, index) => {
+      const sum = sums[index];
+      if (sum.count === 0) {
+        // 空色群會產生沒有沙子的水桶；改用距離既有中心最遠的像素補位，讓色盤維持可玩。
+        nextCenters.push(pickFarthestPixelCenter(pixels, [...centers, ...nextCenters], usedFallbackPixelIndices));
+        return;
+      }
+      nextCenters.push({
+        r: Math.round(sum.r / sum.count),
+        g: Math.round(sum.g / sum.count),
+        b: Math.round(sum.b / sum.count),
+      });
+    });
+    centers = nextCenters;
+  }
+
+  const repairPixelIndices = new Set();
+  for (let repairIndex = 0; repairIndex < colorCount; repairIndex += 1) {
+    const counts = countCenterAssignments(pixels, centers);
+    const emptyCenterIndex = counts.findIndex((count) => count === 0);
+    if (emptyCenterIndex === -1) {
+      break;
+    }
+    centers[emptyCenterIndex] = pickFarthestPixelCenter(pixels, centers, repairPixelIndices);
+  }
+
+  const finalCounts = countCenterAssignments(pixels, centers);
+
+  return centers
+    .map((center, index) => ({ ...center, count: finalCounts[index] }))
+    .sort((a, b) => b.count - a.count);
+}
+
+function countCenterAssignments(pixels, centers) {
+  const counts = centers.map(() => 0);
+  pixels.forEach((pixel) => {
+    counts[nearestColorIndex(pixel, centers)] += 1;
+  });
+  return counts;
+}
+
+function pickFarthestPixelCenter(pixels, centers, usedPixelIndices) {
+  let bestIndex = 0;
+  let bestDistance = -1;
+  pixels.forEach((pixel, index) => {
+    if (usedPixelIndices.has(index)) {
+      return;
+    }
+
+    const nearestDistance = centers.reduce((distance, center) => Math.min(distance, colorDistanceSquared(pixel, center)), Infinity);
+    if (nearestDistance > bestDistance) {
+      bestDistance = nearestDistance;
+      bestIndex = index;
+    }
+  });
+
+  usedPixelIndices.add(bestIndex);
+  return { ...pixels[bestIndex] };
+}
+
+function buildRowsFromPixels(pixels, centers, paletteEntries) {
+  const rows = [];
+  for (let y = 0; y < SOURCE_IMAGE_SIZE; y += 1) {
+    const row = [];
+    for (let x = 0; x < SOURCE_IMAGE_SIZE; x += 1) {
+      const pixel = pixels[y * SOURCE_IMAGE_SIZE + x];
+      row.push(paletteEntries[nearestColorIndex(pixel, centers)].key);
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+async function decodeImageFile(file) {
+  if (window.createImageBitmap) {
+    return createImageBitmap(file);
+  }
+
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("圖片讀取失敗。"));
+    image.src = URL.createObjectURL(file);
+  });
+}
+
+function drawImageToSourceCanvas(image) {
+  const canvas = document.createElement("canvas");
+  canvas.width = SOURCE_IMAGE_SIZE;
+  canvas.height = SOURCE_IMAGE_SIZE;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+
+  const scale = Math.max(SOURCE_IMAGE_SIZE / image.width, SOURCE_IMAGE_SIZE / image.height);
+  const drawWidth = image.width * scale;
+  const drawHeight = image.height * scale;
+  const drawX = (SOURCE_IMAGE_SIZE - drawWidth) / 2;
+  const drawY = (SOURCE_IMAGE_SIZE - drawHeight) / 2;
+  context.clearRect(0, 0, SOURCE_IMAGE_SIZE, SOURCE_IMAGE_SIZE);
+  context.drawImage(image, drawX, drawY, drawWidth, drawHeight);
+  return context.getImageData(0, 0, SOURCE_IMAGE_SIZE, SOURCE_IMAGE_SIZE);
+}
+
+async function convertImageFileToLevel(file, paletteSize) {
+  const image = await decodeImageFile(file);
+  const imageData = drawImageToSourceCanvas(image);
+  image.close?.();
+
+  const pixels = extractPixelsFromImageData(imageData);
+  const centers = quantizePixels(pixels, paletteSize);
+  const paletteEntries = centers.map((center, index) => ({
+    key: `upload_${index + 1}`,
+    label: `色${index + 1}`,
+    hex: rgbToHex(center.r, center.g, center.b),
+  }));
+  const rows = buildRowsFromPixels(pixels, centers, paletteEntries);
+  return { rows, paletteEntries };
 }
 
 function colorId(color) {
@@ -810,6 +1030,12 @@ function setMessage(text) {
   elements.messageBar.textContent = text;
 }
 
+function setUploadStatus(text) {
+  if (elements.uploadStatus) {
+    elements.uploadStatus.textContent = text;
+  }
+}
+
 function addLog(text, color = "green") {
   if (!elements.eventLog || elements.eventLog.closest(".is-hidden")) {
     return;
@@ -828,6 +1054,43 @@ function renderLog() {
     li.style.setProperty("--event-color", colorHex(item.color));
     elements.eventLog.append(li);
   });
+}
+
+function applyConvertedLevel(rows, paletteEntries) {
+  setGamePalette(paletteEntries);
+  currentLevelRows = rows;
+  bucketButtons = new Map();
+  bucketPaletteSignature = "";
+  gameState = new GameState(currentLevelRows);
+  isAbsorptionLoopRunning = false;
+  lastSlotUiRefreshAt = 0;
+  logItems = [];
+  renderLog();
+  sceneRef?.createSandBitmapLayer();
+  sceneRef?.syncFromState(gameState);
+  renderUI();
+}
+
+async function handleImageUpload(event) {
+  const file = event.target.files?.[0];
+  if (!file) {
+    return;
+  }
+
+  const paletteSize = clampPaletteSize(elements.paletteSizeSelect?.value ?? 6);
+  setUploadStatus("轉換中...");
+
+  try {
+    const { rows, paletteEntries } = await convertImageFileToLevel(file, paletteSize);
+    applyConvertedLevel(rows, paletteEntries);
+    setMessage(`圖片已轉成 ${SOURCE_IMAGE_SIZE}x${SOURCE_IMAGE_SIZE}、${paletteEntries.length} 色沙畫。`);
+    setUploadStatus(`${paletteEntries.length} 色完成`);
+  } catch (error) {
+    setUploadStatus("轉換失敗");
+    setMessage(error.message || "圖片轉換失敗。");
+  } finally {
+    event.target.value = "";
+  }
 }
 
 if (!window.Phaser) {
@@ -1244,7 +1507,10 @@ function renderAvailableColors() {
 }
 
 function renderBucketPalette() {
-  if (bucketButtons.size === 0) {
+  const signature = BUCKET_COLORS.join("|");
+  if (bucketButtons.size === 0 || bucketPaletteSignature !== signature) {
+    bucketPaletteSignature = signature;
+    bucketButtons = new Map();
     elements.bucketPalette.replaceChildren();
 
     BUCKET_COLORS.forEach((color) => {
@@ -1525,7 +1791,7 @@ async function resolveAbsorption() {
 }
 
 function resetGame() {
-  gameState = new GameState(LEVEL_ROWS);
+  gameState = new GameState(currentLevelRows);
   isAbsorptionLoopRunning = false;
   lastSlotUiRefreshAt = 0;
   logItems = [];
@@ -1542,7 +1808,7 @@ function bootPhaser() {
     return;
   }
 
-  gameState = new GameState(LEVEL_ROWS);
+  gameState = new GameState(currentLevelRows);
   phaserGame = new Phaser.Game({
     type: Phaser.AUTO,
     parent: "gameCanvas",
@@ -1564,6 +1830,7 @@ function bootPhaser() {
 
 renderBeltSpeedButton();
 renderGravityButton();
+elements.imageUploadInput?.addEventListener("change", handleImageUpload);
 elements.gravityButton?.addEventListener("click", cycleGravityDirection);
 elements.beltSpeedButton?.addEventListener("click", cycleBeltSpeed);
 elements.resetButton.addEventListener("click", resetGame);

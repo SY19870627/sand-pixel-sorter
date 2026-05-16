@@ -21,6 +21,16 @@
             <strong id="remainingValue">0</strong>
             <div id="remainingByColor" class="remaining-colors"></div>
           </div>
+          <div class="upload-controls">
+            <label class="upload-button" for="imageUploadInput">上傳圖片</label>
+            <input id="imageUploadInput" class="upload-input" type="file" accept="image/*" />
+            <select id="paletteSizeSelect" class="palette-select" aria-label="選擇轉換色數">
+              <option value="6" selected>6 色</option>
+              <option value="7">7 色</option>
+              <option value="8">8 色</option>
+            </select>
+            <span id="uploadStatus" class="upload-status" aria-live="polite"></span>
+          </div>
           <button id="gravityButton" class="gravity-button" type="button" aria-label="切換重力方向">重力 下</button>
           <button id="beltSpeedButton" class="speed-button" type="button" aria-label="調整輸送帶速度">輸送帶 x1</button>
           <button id="resetButton" class="reset-button" type="button">重置關卡</button>

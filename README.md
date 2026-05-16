@@ -16,7 +16,7 @@ D:\Git\Idle Sand Sorting\index.html
 
 - 每顆沙是 bitmap 裡的 `1` 個 pixel，不是獨立 JS 物件或 Phaser circle。
 - `colorGrid: Uint8Array` 保存沙子顏色，`0` 代表空格，`1..N` 代表顏色。
-- 目前來源圖是程式產生的 `128x128` bitmap，只使用 6 種顏色。
+- 預設來源圖是程式產生的 `128x128` bitmap；玩家也可以上傳圖片並轉成 `6 / 7 / 8` 色沙畫。
 - 畫面只顯示一張低解析度 CanvasTexture，並用 nearest-neighbor / `image-rendering: pixelated` 放大。
 - 水桶只吸「該桶目前 X 軸正上方」底部可接觸的同色 pixel。
 - 吸走一顆沙後，只把受影響區域加入 active queue，沙子依照下、左下、右下規則流動。
@@ -25,7 +25,7 @@ D:\Git\Idle Sand Sorting\index.html
 ## 原型規則
 
 - 每個像素格是一個垂直堆疊。
-- 上方顯示的是完整像素沙畫；目前沙畫解析度為 `128x128`，來源色盤限制為 6 色。
+- 上方顯示的是完整像素沙畫；目前沙畫解析度為 `128x128`，來源色盤可為 `6 / 7 / 8` 色。
 - 每格目前只有一層沙畫顏色；吸完後該格會直接變空，不會露出隨機填充色。
 - 吸走一格後，同一欄上方的沙會往下掉補位。
 - 水桶放入 5 格輸送帶後會自動吸同色底層。
@@ -40,6 +40,7 @@ D:\Git\Idle Sand Sorting\index.html
 - 放桶時會選擇畫面上 X 座標最左邊的空槽，而不是槽位編號最小的空槽。
 - 右側介面已極簡化，只保留水桶按鈕。
 - 上方工具列會顯示目前剩餘沙子總量，並依顏色拆開顯示各色剩餘量。
+- 上方工具列可上傳圖片，瀏覽器會在本機置中裁切成 `128x128`，並用 k-means 量化成 `6 / 7 / 8` 色。
 - 本原型每吸 `1` 個 pixel 算 `1` 單位，水桶容量是 `300`。
 - 水桶滿 `300/300` 後會消失並釋放槽位。
 - 剩餘沙子歸零時會顯示通關畫面，水桶按鈕會改成「已完成」。
@@ -99,25 +100,25 @@ D:\Git\Idle Sand Sorting\index.html
 
 任務清單：
 
-- [ ] 新增圖片上傳 UI，包含檔案選擇按鈕與色數選擇 `6 / 7 / 8`。
-- [ ] 使用 `FileReader` 或 `createImageBitmap` 讀取玩家上傳的圖片。
-- [ ] 建立離屏 canvas，將圖片依「置中裁切」縮放成 `128x128`。
-- [ ] 讀取 `ImageData`，過濾透明 pixel，取得 RGB 樣本。
-- [ ] 實作顏色量化演算法，第一版使用 k-means 或 median cut。
-- [ ] 將量化後的 palette 轉成遊戲色盤資料，包含 `key`、`label`、`hex`、`value`。
-- [ ] 將每個 pixel 指派到最接近的 palette 顏色，建立新的 `rows` 或直接建立 `colorGrid`。
-- [ ] 讓 `SandEngine` 支援從動態 palette 與動態 rows 重建關卡。
-- [ ] 將 `COLOR_ORDER`、`BUCKET_COLORS`、`COLOR_DATA` 改成可由目前關卡 palette 更新。
-- [ ] 重新產生右側水桶按鈕，水桶數量等於 palette 色數。
-- [ ] 更新剩餘沙子總量與分色剩餘顯示。
-- [ ] 上傳成功後重置輸送帶、水桶、通關狀態、沙流 active cells。
-- [ ] 若圖片讀取或量化失敗，顯示簡短錯誤訊息並保留原關卡。
-- [ ] 驗證 `128x128`、`6 色` 圖片轉換後總沙量為 `16384`。
-- [ ] 驗證 `6 / 7 / 8` 色會產生對應數量水桶。
-- [ ] 驗證上傳後吸沙、滿桶、自動移除無對應顏色桶、通關畫面都能正常運作。
-- [ ] 執行 `node --check app.js`。
-- [ ] 使用 `http://127.0.0.1:57512/index.html` 驗證瀏覽器流程。
-- [ ] 完成後提交 commit。
+- [x] 新增圖片上傳 UI，包含檔案選擇按鈕與色數選擇 `6 / 7 / 8`。
+- [x] 使用 `FileReader` 或 `createImageBitmap` 讀取玩家上傳的圖片。
+- [x] 建立離屏 canvas，將圖片依「置中裁切」縮放成 `128x128`。
+- [x] 讀取 `ImageData`，過濾透明 pixel，取得 RGB 樣本。
+- [x] 實作顏色量化演算法，第一版使用 k-means 或 median cut。
+- [x] 將量化後的 palette 轉成遊戲色盤資料，包含 `key`、`label`、`hex`、`value`。
+- [x] 將每個 pixel 指派到最接近的 palette 顏色，建立新的 `rows` 或直接建立 `colorGrid`。
+- [x] 讓 `SandEngine` 支援從動態 palette 與動態 rows 重建關卡。
+- [x] 將 `COLOR_ORDER`、`BUCKET_COLORS`、`COLOR_DATA` 改成可由目前關卡 palette 更新。
+- [x] 重新產生右側水桶按鈕，水桶數量等於 palette 色數。
+- [x] 更新剩餘沙子總量與分色剩餘顯示。
+- [x] 上傳成功後重置輸送帶、水桶、通關狀態、沙流 active cells。
+- [x] 若圖片讀取或量化失敗，顯示簡短錯誤訊息並保留原關卡。
+- [x] 驗證 `128x128`、`6 色` 圖片轉換後總沙量為 `16384`。
+- [x] 驗證 `6 / 7 / 8` 色會產生對應數量水桶。
+- [x] 驗證上傳後吸沙、滿桶、自動移除無對應顏色桶、通關畫面都能正常運作。
+- [x] 執行 `node --check app.js`。
+- [x] 使用 `http://127.0.0.1:57512/index.html` 驗證瀏覽器流程。
+- [x] 完成後提交 commit。
 
 下次執行提示詞：
 
