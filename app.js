@@ -1,5 +1,5 @@
 const SAND_UNIT_VALUE = 1;
-const BUCKET_CAPACITY = 100;
+const BUCKET_CAPACITY = 300;
 const SLOT_COUNT = 5;
 const SOURCE_IMAGE_SIZE = 128;
 const BELT_SPEED_MULTIPLIERS = [1, 2, 3];
@@ -65,8 +65,10 @@ const elements = {
   gravityButton: document.querySelector("#gravityButton"),
   beltSpeedButton: document.querySelector("#beltSpeedButton"),
   resetButton: document.querySelector("#resetButton"),
+  completionOverlay: document.querySelector("#completionOverlay"),
   phasePill: document.querySelector("#phasePill"),
   remainingValue: document.querySelector("#remainingValue"),
+  remainingByColor: document.querySelector("#remainingByColor"),
   turnValue: document.querySelector("#turnValue"),
   availableColors: document.querySelector("#availableColors"),
   bucketPalette: document.querySelector("#bucketPalette"),
@@ -179,6 +181,7 @@ class SandEngine {
     this.height = rows.length;
     this.width = rows[0]?.length ?? 0;
     this.colorGrid = new Uint8Array(this.width * this.height);
+    this.colorCounts = new Uint32Array(COLOR_ORDER.length + 1);
     this.remainingTotal = 0;
     this.activeCells = new Set();
     this.dirtyCells = new Set();
@@ -194,6 +197,7 @@ class SandEngine {
         const id = colorId(color);
         this.colorGrid[this.index(columnIndex, rowIndex)] = id;
         if (id !== EMPTY_COLOR_ID) {
+          this.incrementColorCount(id);
           this.remainingTotal += SAND_UNIT_VALUE;
         }
       });
@@ -238,6 +242,26 @@ class SandEngine {
 
   isCellEmpty(cellX, cellY) {
     return this.isInsideCell(cellX, cellY) && this.getCell(cellX, cellY) === EMPTY_COLOR_ID;
+  }
+
+  incrementColorCount(id) {
+    if (id !== EMPTY_COLOR_ID) {
+      this.colorCounts[id] += SAND_UNIT_VALUE;
+    }
+  }
+
+  decrementColorCount(id) {
+    if (id !== EMPTY_COLOR_ID) {
+      this.colorCounts[id] = Math.max(0, this.colorCounts[id] - SAND_UNIT_VALUE);
+    }
+  }
+
+  hasColor(color) {
+    return this.hasColorId(colorId(color));
+  }
+
+  hasColorId(id) {
+    return id !== EMPTY_COLOR_ID && this.colorCounts[id] > 0;
   }
 
   markDirty(index) {
@@ -309,7 +333,9 @@ class SandEngine {
       return false;
     }
 
+    const removedColorId = this.colorGrid[index];
     this.colorGrid[index] = EMPTY_COLOR_ID;
+    this.decrementColorCount(removedColorId);
     this.remainingTotal = Math.max(0, this.remainingTotal - SAND_UNIT_VALUE);
     this.markDirty(index);
     return true;
@@ -573,7 +599,12 @@ class SandEngine {
         const index = this.index(x, y);
         const dx = x - centerX;
         const dy = y - centerY;
-        if (dx * dx + dy * dy <= radiusSquared && this.getIndex(index) !== EMPTY_COLOR_ID) {
+        const originalColorId = this.getIndex(index);
+        if (dx * dx + dy * dy <= radiusSquared && originalColorId !== EMPTY_COLOR_ID) {
+          if (originalColorId !== targetColorId) {
+            this.decrementColorCount(originalColorId);
+            this.incrementColorCount(targetColorId);
+          }
           this.colorGrid[index] = targetColorId;
           this.markDirty(index);
         }
@@ -597,8 +628,13 @@ class SandEngine {
     for (let y = minY; y <= maxY; y += 1) {
       for (let x = minX; x <= maxX; x += 1) {
         const index = this.index(x, y);
-        if (this.getIndex(index) === EMPTY_COLOR_ID) {
+        const originalColorId = this.getIndex(index);
+        if (originalColorId === EMPTY_COLOR_ID) {
           this.remainingTotal += SAND_UNIT_VALUE;
+          this.incrementColorCount(targetColorId);
+        } else if (originalColorId !== targetColorId) {
+          this.decrementColorCount(originalColorId);
+          this.incrementColorCount(targetColorId);
         }
         this.colorGrid[index] = targetColorId;
         this.markDirty(index);
@@ -665,6 +701,18 @@ class Conveyor {
     const removed = [];
     this.slots = this.slots.map((bucket) => {
       if (bucket?.isFull()) {
+        removed.push(bucket);
+        return null;
+      }
+      return bucket;
+    });
+    return removed;
+  }
+
+  removeBucketsWithoutRemainingSand(field) {
+    const removed = [];
+    this.slots = this.slots.map((bucket) => {
+      if (bucket !== null && !field.hasColor(bucket.color)) {
         removed.push(bucket);
         return null;
       }
@@ -1211,6 +1259,7 @@ function renderBucketPalette() {
       icon.style.setProperty("--bucket-color", colorHex(color));
 
       const label = document.createElement("span");
+      label.className = "bucket-label";
       label.textContent = colorLabel(color);
 
       button.append(icon, label);
@@ -1225,9 +1274,25 @@ function renderBucketPalette() {
 
 function updateBucketPaletteState() {
   const disabled = gameState.phase !== "running" || gameState.conveyor.isFull();
+  const isCompleted = gameState.field.remainingTotal <= 0 || gameState.phase === "won";
   bucketButtons.forEach((button) => {
+    const color = button.dataset.color;
+    const label = button.querySelector(".bucket-label");
     button.disabled = disabled;
+    button.classList.toggle("is-completed", isCompleted);
+    button.setAttribute("aria-label", isCompleted ? "已完成" : `放入${colorLabel(color)}桶`);
+    if (label) {
+      label.textContent = isCompleted ? "已完成" : colorLabel(color);
+    }
   });
+}
+
+function renderCompletionOverlay() {
+  if (!elements.completionOverlay) {
+    return;
+  }
+
+  elements.completionOverlay.classList.toggle("is-hidden", gameState.phase !== "won");
 }
 
 function renderBeltSpeedButton() {
@@ -1280,10 +1345,28 @@ function renderPhase() {
   elements.phasePill.classList.toggle("is-lost", gameState.phase === "lost");
 }
 
+function renderRemainingByColor() {
+  if (!elements.remainingByColor) {
+    return;
+  }
+
+  elements.remainingByColor.replaceChildren();
+  COLOR_ORDER.forEach((color) => {
+    const count = gameState.field.colorCounts[colorId(color)] ?? 0;
+    const item = document.createElement("span");
+    item.className = "remaining-color";
+    item.style.setProperty("--sand-color", colorHex(color));
+    item.textContent = `${colorLabel(color)} ${count}`;
+    elements.remainingByColor.append(item);
+  });
+}
+
 function renderUI({ updateSlots = true } = {}) {
   elements.remainingValue.textContent = gameState.field.remainingTotal;
   elements.turnValue.textContent = gameState.turn;
   renderPhase();
+  renderCompletionOverlay();
+  renderRemainingByColor();
   renderGravityButton();
   renderAvailableColors();
   renderBucketPalette();
@@ -1341,10 +1424,30 @@ function updateEndState() {
   }
 }
 
+function removeBucketsWithoutRemainingSand() {
+  const removedBuckets = gameState.conveyor.removeBucketsWithoutRemainingSand(gameState.field);
+  if (removedBuckets.length === 0) {
+    return false;
+  }
+
+  const removedText = removedBuckets.map((bucket) => `${colorLabel(bucket.color)}桶`).join("、");
+  setMessage(`${removedText} 已沒有對應顏色的沙子，自動離開輸送帶。`);
+  removedBuckets.forEach((bucket) => addLog(`${colorLabel(bucket.color)}桶無對應沙子，自動移除。`, bucket.color));
+  renderUI();
+  return true;
+}
+
 async function resolveAbsorption() {
   const pendingAnimations = new Set();
 
   while (gameState.phase === "running" && gameState.conveyor.activeBuckets().length > 0) {
+    if (removeBucketsWithoutRemainingSand()) {
+      await sleep(BUCKET_REMOVE_DELAY_MS);
+      if (gameState.conveyor.activeBuckets().length === 0) {
+        break;
+      }
+    }
+
     const reservedCellIndices = new Set();
     let startedThisTick = 0;
 
@@ -1406,6 +1509,10 @@ async function resolveAbsorption() {
       setMessage(`${removedText} 已滿，離開輸送帶。`);
       removedBuckets.forEach((bucket) => addLog(`${colorLabel(bucket.color)}桶滿桶消除。`, bucket.color));
       renderUI();
+      await sleep(BUCKET_REMOVE_DELAY_MS);
+    }
+
+    if (removeBucketsWithoutRemainingSand()) {
       await sleep(BUCKET_REMOVE_DELAY_MS);
     }
 

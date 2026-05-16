@@ -16,6 +16,11 @@
           <h1>Sand Pixel Sorter</h1>
         </div>
         <div class="topbar-actions">
+          <div class="remaining-chip" aria-live="polite">
+            <span>剩餘沙子</span>
+            <strong id="remainingValue">0</strong>
+            <div id="remainingByColor" class="remaining-colors"></div>
+          </div>
           <button id="gravityButton" class="gravity-button" type="button" aria-label="切換重力方向">重力 下</button>
           <button id="beltSpeedButton" class="speed-button" type="button" aria-label="調整輸送帶速度">輸送帶 x1</button>
           <button id="resetButton" class="reset-button" type="button">重置關卡</button>
@@ -32,13 +37,20 @@
             <span id="phasePill" class="phase-pill is-hidden">進行中</span>
           </div>
           <div id="gameCanvas" class="game-canvas" data-testid="game-canvas"></div>
+          <div id="completionOverlay" class="completion-overlay is-hidden" aria-live="polite">
+            <div class="completion-panel">
+              <span>完成</span>
+              <strong>通關成功</strong>
+              <p>所有沙子都已吸收完畢。</p>
+            </div>
+          </div>
         </section>
 
         <aside class="side-panel" aria-label="遊戲控制">
           <section class="stat-strip is-hidden" aria-label="狀態">
             <div class="stat-block">
               <span>剩餘沙粒</span>
-              <strong id="remainingValue">0</strong>
+              <strong>0</strong>
             </div>
             <div class="stat-block">
               <span>回合</span>
