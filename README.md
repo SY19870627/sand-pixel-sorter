@@ -40,3 +40,41 @@ D:\Git\Idle Sand Sorting\index.html
 - 本原型每吸 `1` 個 pixel 算 `1` 單位，水桶容量是 `100`。
 - 水桶滿 `100/100` 後會消失並釋放槽位。
 - 若 5 個槽位全滿，且沒有任何水桶顏色符合目前底層可吸顏色，判定死鎖。
+
+## 下一階段架構計畫：SandEngine 抽離與可變重力
+
+目標：將沙子模擬從 Phaser 場景中抽離，形成可測試、可擴充的 `SandEngine`。這個階段不追求完整 Noita 等級的材料系統，而是先讓旋轉畫框、重力方向變更與道具特效有穩定的架構入口。
+
+設計原則：
+
+- 沙子仍維持 `Uint8Array colorGrid`，每個 cell 是一顆沙或空格。
+- Phaser 只負責顯示、輸入、Tween 與畫面特效。
+- `SandEngine` 負責 grid、active cells、沙流規則、吸沙查詢與道具 command。
+- 重力方向不能再寫死為 `cellY + 1`，需改成 `gravity = { x, y }`。
+- 目前先維持 active cells，不立即導入 chunk dirty rect；但 API 要保留未來升級成 chunks 的空間。
+
+任務清單：
+
+- [ ] 建立 `SandEngine` 類別，接管 `colorGrid`、`width`、`height`、`remainingTotal`。
+- [ ] 將 `SandField` 中的 grid 操作搬入 `SandEngine`，包含 `index`、`cellX`、`cellY`、`getIndex`、`clearIndex`、`moveIndex`。
+- [ ] 將 `activeCells`、`dirtyCells` 與沙流步進邏輯移入 `SandEngine`。
+- [ ] 讓 Phaser 場景改用 `engine.consumeDirtyCells()` 取得要重繪的 pixel。
+- [ ] 建立 `gravityDirection`，支援 `down`、`left`、`up`、`right`。
+- [ ] 改寫沙流規則，依照目前 gravity 計算「正下方」、「左斜下」、「右斜下」。
+- [ ] 改寫底層查詢，讓吸沙不再只看固定 X 軸，而是依 gravity 查詢可接觸的外層沙。
+- [ ] 保留目前水桶對應畫框座標的吸沙規則，確保未旋轉時行為不變。
+- [ ] 建立 engine command 介面，例如 `eraseCircle`、`recolorArea`、`wakeArea`、`rotateGravity`、`spawnSandRect`。
+- [ ] 實作 `rotateGravity(direction)`，先只旋轉重力，不旋轉美術畫框。
+- [ ] 增加一個簡單測試按鈕或除錯入口，切換重力方向觀察沙流。
+- [ ] 保持水桶、輸送帶、滿桶消除、死鎖判定可正常運作。
+- [ ] 執行 `node --check app.js`。
+- [ ] 使用 `http://127.0.0.1:57512/index.html` 驗證頁面可載入。
+- [ ] 驗證預設重力下，放桶吸沙行為與目前版本一致。
+- [ ] 驗證切換重力後，沙子會沿新方向流動。
+- [ ] 完成後提交 commit。
+
+下次執行提示詞：
+
+```text
+請在 Sand Pixel Sorter 專案中執行下一階段架構重構：建立 SandEngine，將目前 app.js 裡的沙子資料、active cells、dirty cells、沙流步進、吸沙查詢從 Phaser 場景抽離。SandEngine 使用 Uint8Array colorGrid，保持每顆沙為 1 pixel，並提供 consumeDirtyCells 給渲染層更新 ImageData。請加入 gravityDirection，支援 down、left、up、right，將沙流規則從寫死 cellY + 1 改為依 gravity 計算正下方、左斜下、右斜下。吸沙查詢也要改成依 gravity 找水桶對應線上的外層可接觸沙，但預設 down 時行為必須與目前版本一致。請建立 engine command 入口，至少包含 wakeArea、eraseCircle、recolorArea、rotateGravity、spawnSandRect，方便未來做旋轉畫框與道具特效。本階段先不要實作完整 chunk dirty rect，但 API 要保留未來升級空間。完成後執行 node --check app.js，並用 http://127.0.0.1:57512/index.html 驗證頁面載入、預設吸沙、切換重力後沙流方向，最後 commit。
+```
