@@ -1,7 +1,8 @@
 const SAND_UNIT_VALUE = 1;
 const BUCKET_CAPACITY = 100;
 const SLOT_COUNT = 5;
-const PIXEL_SCALE = 16;
+const SOURCE_IMAGE_SIZE = 128;
+const BELT_SPEED_MULTIPLIERS = [1, 2, 3];
 const SUCK_TWEEN_MS = 68;
 const SUCK_TRAIL_MS = 120;
 const SUCK_TRAIL_COUNT = 7;
@@ -34,8 +35,8 @@ const COLOR_DATA = {
   white: { label: "白", hex: "#f4ead8", value: 0xf4ead8 },
 };
 
-const COLOR_ORDER = ["sky", "brown", "skin", "dark", "white", "red", "yellow", "blue", "green", "purple"];
-const BUCKET_COLORS = ["sky", "brown", "skin", "dark", "white", "red", "yellow", "blue"];
+const COLOR_ORDER = ["sky", "brown", "skin", "dark", "white", "red"];
+const BUCKET_COLORS = ["sky", "brown", "skin", "dark", "white", "red"];
 const COLOR_ID_BY_KEY = new Map(COLOR_ORDER.map((color, index) => [color, index + 1]));
 const COLOR_KEY_BY_ID = ["empty", ...COLOR_ORDER];
 
@@ -53,37 +54,8 @@ const RGBA_BY_COLOR_ID = (() => {
   return rgba;
 })();
 
-const PAINTING_ROWS = [
-  "ssssssssssssssss",
-  "ssssbbbbbbbbssss",
-  "sssbbbbbbbbbbsss",
-  "ssbbbbbbbbbbbbss",
-  "ssbbddddddddbbss",
-  "sbbddkkkkkkddbbs",
-  "sbbddkwwkkwddbbs",
-  "sbbddkkkkkkddbbs",
-  "ssbddkkrrkkddbss",
-  "sssbddkkkkddbsss",
-  "ssssbddddddbssss",
-  "sssyyybbbbbyysss",
-  "sssyyybbbbbyysss",
-  "ssssyyyyyyyyssss",
-  "ssssggggggggssss",
-  "ssssgggssssgggss",
-];
-
-const PAINTING_COLOR_KEY = {
-  s: "sky",
-  b: "brown",
-  d: "skin",
-  k: "dark",
-  w: "white",
-  r: "red",
-  y: "yellow",
-  g: "blue",
-};
-
 const elements = {
+  beltSpeedButton: document.querySelector("#beltSpeedButton"),
   resetButton: document.querySelector("#resetButton"),
   phasePill: document.querySelector("#phasePill"),
   remainingValue: document.querySelector("#remainingValue"),
@@ -101,23 +73,86 @@ let isAbsorptionLoopRunning = false;
 let lastSlotUiRefreshAt = 0;
 let logItems = [];
 let bucketButtons = new Map();
+let beltSpeedIndex = 0;
 
-function upscalePainting(patternRows, scale) {
-  const expandedRows = [];
-  patternRows.forEach((row) => {
-    const expandedRow = [...row].map((symbol) => symbol.repeat(scale)).join("");
-    for (let repeatIndex = 0; repeatIndex < scale; repeatIndex += 1) {
-      expandedRows.push(expandedRow);
+function createFilledPainting(size, color) {
+  return Array.from({ length: size }, () => Array(size).fill(color));
+}
+
+function clampInteger(value, min, max) {
+  return Math.min(max, Math.max(min, Math.floor(value)));
+}
+
+function drawRect(rows, left, top, right, bottom, color) {
+  const minY = clampInteger(top, 0, rows.length - 1);
+  const maxY = clampInteger(bottom, 0, rows.length - 1);
+  const minX = clampInteger(left, 0, rows[0].length - 1);
+  const maxX = clampInteger(right, 0, rows[0].length - 1);
+
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      rows[y][x] = color;
     }
-  });
-  return expandedRows;
+  }
 }
 
-function buildPaintingLevel(patternRows) {
-  return patternRows.map((row) => [...row].map((symbol) => PAINTING_COLOR_KEY[symbol] ?? "sky"));
+function drawEllipse(rows, centerX, centerY, radiusX, radiusY, color) {
+  const minY = Math.max(0, Math.floor(centerY - radiusY));
+  const maxY = Math.min(rows.length - 1, Math.ceil(centerY + radiusY));
+  const minX = Math.max(0, Math.floor(centerX - radiusX));
+  const maxX = Math.min(rows[0].length - 1, Math.ceil(centerX + radiusX));
+
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const normalizedX = (x - centerX) / radiusX;
+      const normalizedY = (y - centerY) / radiusY;
+      if (normalizedX * normalizedX + normalizedY * normalizedY <= 1) {
+        rows[y][x] = color;
+      }
+    }
+  }
 }
 
-const LEVEL_ROWS = buildPaintingLevel(upscalePainting(PAINTING_ROWS, PIXEL_SCALE));
+function createSourcePainting() {
+  const rows = createFilledPainting(SOURCE_IMAGE_SIZE, "sky");
+
+  // 這張來源圖是真正 128x128；每一格都會直接變成一顆可吸收的沙。
+  drawEllipse(rows, 64, 60, 40, 48, "brown");
+  drawEllipse(rows, 64, 62, 30, 37, "skin");
+  drawEllipse(rows, 30, 63, 8, 14, "skin");
+  drawEllipse(rows, 98, 63, 8, 14, "skin");
+
+  drawEllipse(rows, 64, 25, 33, 16, "red");
+  drawRect(rows, 23, 30, 105, 39, "red");
+  drawRect(rows, 36, 39, 92, 46, "brown");
+
+  drawRect(rows, 39, 52, 89, 67, "dark");
+  drawRect(rows, 47, 56, 60, 61, "white");
+  drawRect(rows, 73, 56, 84, 61, "white");
+  drawRect(rows, 61, 60, 67, 67, "skin");
+
+  drawRect(rows, 52, 80, 76, 89, "dark");
+  drawRect(rows, 56, 81, 72, 85, "red");
+  drawRect(rows, 58, 86, 70, 89, "white");
+
+  drawEllipse(rows, 64, 91, 24, 16, "brown");
+  drawRect(rows, 55, 92, 73, 108, "skin");
+  drawRect(rows, 36, 108, 92, 127, "white");
+  drawRect(rows, 43, 102, 85, 116, "red");
+  drawRect(rows, 51, 116, 77, 127, "dark");
+
+  return rows;
+}
+
+const LEVEL_ROWS = createSourcePainting();
+
+function beltSpeedMultiplier() {
+  return BELT_SPEED_MULTIPLIERS[beltSpeedIndex] ?? 1;
+}
+
+function currentBeltSpeed() {
+  return BELT_SPEED_PX_PER_SECOND * beltSpeedMultiplier();
+}
 
 function colorId(color) {
   return COLOR_ID_BY_KEY.get(color) ?? EMPTY_COLOR_ID;
@@ -511,7 +546,7 @@ class SandSorterScene extends Phaser.Scene {
 
   update(_time, delta) {
     this.beltOffset = Phaser.Math.Wrap(
-      this.beltOffset + (BELT_SPEED_PX_PER_SECOND * delta) / 1000,
+      this.beltOffset + (currentBeltSpeed() * delta) / 1000,
       0,
       this.beltLoopWidth
     );
@@ -964,6 +999,21 @@ function updateBucketPaletteState() {
   });
 }
 
+function renderBeltSpeedButton() {
+  if (!elements.beltSpeedButton) {
+    return;
+  }
+
+  const multiplier = beltSpeedMultiplier();
+  elements.beltSpeedButton.textContent = `輸送帶 x${multiplier}`;
+  elements.beltSpeedButton.setAttribute("aria-label", `目前輸送帶速度 x${multiplier}，點擊切換速度`);
+}
+
+function cycleBeltSpeed() {
+  beltSpeedIndex = (beltSpeedIndex + 1) % BELT_SPEED_MULTIPLIERS.length;
+  renderBeltSpeedButton();
+}
+
 function renderPhase() {
   const label = {
     running: "進行中",
@@ -1150,5 +1200,7 @@ function bootPhaser() {
   });
 }
 
+renderBeltSpeedButton();
+elements.beltSpeedButton?.addEventListener("click", cycleBeltSpeed);
 elements.resetButton.addEventListener("click", resetGame);
 bootPhaser();

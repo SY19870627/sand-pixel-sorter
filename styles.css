@@ -49,6 +49,12 @@ button {
   margin-bottom: 18px;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .eyebrow,
 .section-kicker {
   margin: 0 0 4px;
@@ -76,6 +82,7 @@ h2 {
 }
 
 .reset-button,
+.speed-button,
 .bucket-button {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -88,16 +95,25 @@ h2 {
     box-shadow 120ms ease;
 }
 
-.reset-button {
+.reset-button,
+.speed-button {
   padding: 10px 14px;
   font-weight: 700;
 }
 
 .reset-button:hover,
+.speed-button:hover,
 .bucket-button:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--accent) 56%, var(--line));
   box-shadow: 0 8px 20px rgba(38, 127, 120, 0.14);
   transform: translateY(-1px);
+}
+
+.speed-button {
+  min-width: 112px;
+  color: #ffffff;
+  background: #267f78;
+  border-color: #267f78;
 }
 
 .game-layout {
@@ -564,8 +580,15 @@ h2 {
     flex-direction: column;
   }
 
-  .reset-button {
+  .topbar-actions,
+  .reset-button,
+  .speed-button {
     width: 100%;
+  }
+
+  .topbar-actions {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .playfield,
