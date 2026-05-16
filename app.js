@@ -1004,6 +1004,20 @@ function colorValue(color) {
   return COLOR_DATA[color]?.value ?? 0x8f9893;
 }
 
+function mixColorValue(source, target, amount) {
+  const ratio = Math.max(0, Math.min(1, amount));
+  const sourceRed = (source >> 16) & 0xff;
+  const sourceGreen = (source >> 8) & 0xff;
+  const sourceBlue = source & 0xff;
+  const targetRed = (target >> 16) & 0xff;
+  const targetGreen = (target >> 8) & 0xff;
+  const targetBlue = target & 0xff;
+  const red = Math.round(sourceRed + (targetRed - sourceRed) * ratio);
+  const green = Math.round(sourceGreen + (targetGreen - sourceGreen) * ratio);
+  const blue = Math.round(sourceBlue + (targetBlue - sourceBlue) * ratio);
+  return (red << 16) | (green << 8) | blue;
+}
+
 function sortColors(colors) {
   return [...colors].sort((a, b) => COLOR_ORDER.indexOf(a) - COLOR_ORDER.indexOf(b));
 }
@@ -1270,26 +1284,72 @@ class SandSorterScene extends Phaser.Scene {
         emptyText.setOrigin(0.5);
         container.add(emptyText);
       } else {
-        const bucketBody = this.add.rectangle(0, -8, 42, 38, colorValue(bucket.color));
-        bucketBody.setStrokeStyle(2, 0xffffff, 0.42);
-        const label = this.add.text(0, 20, `${colorLabel(bucket.color)} ${bucket.amount}/${bucket.capacity}`, {
-          color: "#2e332f",
-          fontFamily: "Microsoft JhengHei, sans-serif",
-          fontSize: "13px",
-          fontStyle: "bold",
-        });
-        label.setOrigin(0.5);
-
-        const meterBack = this.add.rectangle(0, 34, 58, 7, 0xe6ece7);
-        const meterFill = this.add.rectangle(-29, 34, 58 * (bucket.amount / bucket.capacity), 7, colorValue(bucket.color));
+        const bucketVisual = this.createBucketVisual(bucket.color);
+        const meterBack = this.add.rectangle(0, 20, 58, 7, 0xe6ece7);
+        const meterFill = this.add.rectangle(-29, 20, 58 * (bucket.amount / bucket.capacity), 7, colorValue(bucket.color));
         meterFill.setOrigin(0, 0.5);
-        container.add([bucketBody, label, meterBack, meterFill]);
+        container.add([bucketVisual, meterBack, meterFill]);
       }
 
       this.slotObjects.push(container);
     });
 
     this.bringBeltMasksToTop();
+  }
+
+  createBucketVisual(color) {
+    // 與右側 CSS 水桶使用同樣的輪廓：寬口、略收底的桶身，避免兩邊造型不一致。
+    const fillColor = colorValue(color);
+    const rimColor = mixColorValue(fillColor, 0xffffff, 0.46);
+    const shadowColor = mixColorValue(fillColor, 0x000000, 0.22);
+    const container = this.add.container(0, -9);
+
+    const body = this.add.graphics();
+    body.fillStyle(fillColor, 1);
+    body.lineStyle(2, 0xffffff, 0.42);
+    body.beginPath();
+    body.moveTo(-22, -6);
+    body.lineTo(22, -6);
+    body.lineTo(16, 23);
+    body.lineTo(-16, 23);
+    body.closePath();
+    body.fillPath();
+    body.strokePath();
+
+    const rim = this.add.graphics();
+    rim.fillStyle(rimColor, 1);
+    rim.lineStyle(1, 0xffffff, 0.34);
+    rim.beginPath();
+    rim.moveTo(-24, -12);
+    rim.lineTo(24, -12);
+    rim.lineTo(22, -4);
+    rim.lineTo(-22, -4);
+    rim.closePath();
+    rim.fillPath();
+    rim.strokePath();
+
+    const shine = this.add.graphics();
+    shine.fillStyle(0xffffff, 0.24);
+    shine.beginPath();
+    shine.moveTo(-17, -2);
+    shine.lineTo(17, -2);
+    shine.lineTo(15, 7);
+    shine.lineTo(-18, 7);
+    shine.closePath();
+    shine.fillPath();
+
+    const bottomShadow = this.add.graphics();
+    bottomShadow.fillStyle(shadowColor, 0.62);
+    bottomShadow.beginPath();
+    bottomShadow.moveTo(-16, 15);
+    bottomShadow.lineTo(16, 15);
+    bottomShadow.lineTo(14, 23);
+    bottomShadow.lineTo(-14, 23);
+    bottomShadow.closePath();
+    bottomShadow.fillPath();
+
+    container.add([body, rim, shine, bottomShadow]);
+    return container;
   }
 
   getSlotCenter(slotIndex) {
@@ -1524,11 +1584,7 @@ function renderBucketPalette() {
       icon.className = "bucket-icon";
       icon.style.setProperty("--bucket-color", colorHex(color));
 
-      const label = document.createElement("span");
-      label.className = "bucket-label";
-      label.textContent = colorLabel(color);
-
-      button.append(icon, label);
+      button.append(icon);
       button.addEventListener("click", () => handleBucketClick(color));
       bucketButtons.set(color, button);
       elements.bucketPalette.append(button);
@@ -1543,13 +1599,9 @@ function updateBucketPaletteState() {
   const isCompleted = gameState.field.remainingTotal <= 0 || gameState.phase === "won";
   bucketButtons.forEach((button) => {
     const color = button.dataset.color;
-    const label = button.querySelector(".bucket-label");
     button.disabled = disabled;
     button.classList.toggle("is-completed", isCompleted);
     button.setAttribute("aria-label", isCompleted ? "已完成" : `放入${colorLabel(color)}桶`);
-    if (label) {
-      label.textContent = isCompleted ? "已完成" : colorLabel(color);
-    }
   });
 }
 
