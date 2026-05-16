@@ -10,16 +10,17 @@ const GRAVITY_VECTORS = {
   up: { x: 0, y: -1, label: "上" },
   left: { x: -1, y: 0, label: "左" },
 };
-const SUCK_TWEEN_MS = 68;
-const SUCK_TRAIL_MS = 120;
-const SUCK_TRAIL_COUNT = 7;
-const ABSORB_ROUND_DELAY_MS = 6;
-const BUCKET_REMOVE_DELAY_MS = 36;
+const SUCK_TWEEN_MS = 34;
+const SUCK_TRAIL_MS = 60;
+const SUCK_TRAIL_COUNT = 4;
+const ABSORB_ROUND_DELAY_MS = 2;
+const BUCKET_REMOVE_DELAY_MS = 18;
 const BELT_SPEED_PX_PER_SECOND = 54;
-const BUCKET_SUCTION_HALF_WIDTH = 22;
-const STREAM_SUCK_INTERVAL_MS = 8;
-const IDLE_SCAN_INTERVAL_MS = 48;
-const SLOT_UI_REFRESH_MS = 140;
+const BUCKET_SUCTION_HALF_WIDTH = 34;
+const MAX_SUCKS_PER_BUCKET_TICK = 2;
+const STREAM_SUCK_INTERVAL_MS = 4;
+const IDLE_SCAN_INTERVAL_MS = 24;
+const SLOT_UI_REFRESH_MS = 80;
 const SAND_STEP_MS = 16;
 const SAND_STEPS_PER_FRAME = 4;
 const ACTIVE_CELL_BUDGET = 4200;
@@ -1285,10 +1286,16 @@ class SandSorterScene extends Phaser.Scene {
         container.add(emptyText);
       } else {
         const bucketVisual = this.createBucketVisual(bucket.color);
-        const meterBack = this.add.rectangle(0, 20, 58, 7, 0xe6ece7);
-        const meterFill = this.add.rectangle(-29, 20, 58 * (bucket.amount / bucket.capacity), 7, colorValue(bucket.color));
-        meterFill.setOrigin(0, 0.5);
-        container.add([bucketVisual, meterBack, meterFill]);
+        const progressPercent = Math.min(100, Math.round((bucket.amount / bucket.capacity) * 100));
+        const progressText = this.add.text(0, 23, `${progressPercent}%`, {
+          color: "#2e332f",
+          fontFamily: "Microsoft JhengHei, sans-serif",
+          fontSize: "15px",
+          fontStyle: "bold",
+        });
+        progressText.setOrigin(0.5);
+        progressText.setStroke("#ffffff", 4);
+        container.add([bucketVisual, progressText]);
       }
 
       this.slotObjects.push(container);
@@ -1779,29 +1786,35 @@ async function resolveAbsorption() {
         continue;
       }
 
-      const cell = sceneRef?.findAbsorbableCell(bucket.color, reservedCellIndices, slotIndex) ?? null;
-      if (cell === null) {
-        continue;
-      }
+      for (let suckCount = 0; suckCount < MAX_SUCKS_PER_BUCKET_TICK && !bucket.isFull(); suckCount += 1) {
+        const cell = sceneRef?.findAbsorbableCell(bucket.color, reservedCellIndices, slotIndex) ?? null;
+        if (cell === null) {
+          break;
+        }
 
-      reservedCellIndices.add(cell.index);
-      bucket.absorb();
+        reservedCellIndices.add(cell.index);
+        bucket.absorb();
 
-      setMessage("水桶正在吸入正上方底層沙像素。");
-      addLog(`${colorLabel(bucket.color)}桶 +${SAND_UNIT_VALUE}。`, bucket.color);
-      startedThisTick += 1;
+        setMessage("水桶正在吸入正上方底層沙像素。");
+        addLog(`${colorLabel(bucket.color)}桶 +${SAND_UNIT_VALUE}。`, bucket.color);
+        startedThisTick += 1;
 
-      const animation = sceneRef
-        .suckCell(cell, slotIndex)
-        .catch(() => undefined)
-        .finally(() => {
-          pendingAnimations.delete(animation);
-        });
-      pendingAnimations.add(animation);
+        const animation = sceneRef
+          .suckCell(cell, slotIndex)
+          .catch(() => undefined)
+          .finally(() => {
+            pendingAnimations.delete(animation);
+          });
+        pendingAnimations.add(animation);
 
-      if (gameState.field.isCleared()) {
-        gameState.phase = "won";
-        break;
+        if (gameState.field.isCleared()) {
+          gameState.phase = "won";
+          break;
+        }
+
+        if (gameState.phase !== "running") {
+          break;
+        }
       }
 
       if (gameState.phase !== "running") {
