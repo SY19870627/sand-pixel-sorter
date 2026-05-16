@@ -38,3 +38,47 @@ D:\Git\Idle Sand Sorting\index.html
 - 本原型每吸一層算 `10` 單位，水桶容量是 `100`。
 - 水桶滿 `100/100` 後會消失並釋放槽位。
 - 若 5 個槽位全滿，且沒有任何水桶顏色符合目前底層可吸顏色，判定死鎖。
+
+## 下一階段任務清單：Bitmap Sand Engine
+
+目標：將沙子核心改成「一顆沙 = bitmap 的一個 pixel」。資料層不再建立一顆沙一個 JS 物件，渲染層也不再逐顆畫圓，而是更新一張低解析度 bitmap，再用 nearest-neighbor 等比例放大顯示。
+
+- [ ] 建立新分支：`engine/bitmap-sand`
+- [ ] 建立 bitmap 沙畫資料模型。
+- [ ] 移除 `SandParticle` 物件式資料。
+- [ ] 使用 `Uint8Array colorGrid` 儲存沙子顏色。
+- [ ] 使用 `0` 代表空格，`1..N` 代表沙子顏色。
+- [ ] 視需要建立 `nextGrid` 或 temp swap buffer。
+- [ ] 建立 `activeQueue`，只保存會動的 cell index。
+- [ ] 建立 `dirtyCells` 或 `dirtyChunks`，只重繪有變動的區域。
+- [ ] 改寫沙流模擬，每次吸沙後只把受影響 cell 加入 active queue。
+- [ ] 每幀只處理 active cells。
+- [ ] 沙流規則採用：下、左下、右下。
+- [ ] 左下與右下加入交錯或隨機順序，避免沙子固定偏向同一側。
+- [ ] 改寫渲染層，建立低解析度 bitmap canvas，例如 `128x128` 或 `256x256`。
+- [ ] 每顆沙直接寫入 `ImageData` 的一個 pixel。
+- [ ] Phaser / DOM 只顯示這一張 bitmap。
+- [ ] 顯示時使用 nearest-neighbor / `image-rendering: pixelated` 等比例放大。
+- [ ] 改寫吸沙邏輯，將水桶目前 X 軸換算成 bitmap column。
+- [ ] 水桶只吸該 column 底部可接觸的同色 pixel。
+- [ ] 吸走後該 pixel 設為 `0`。
+- [ ] 吸走後將該 column 與附近 columns 加入 active queue。
+- [ ] 保留右側水桶按鈕。
+- [ ] 保留輸送帶移動與左右遮罩。
+- [ ] 保留水桶滿桶消除。
+- [ ] 保留死鎖判定。
+- [ ] 每幀限制最多處理 active cells 數量，避免阻塞 UI。
+- [ ] 若 active queue 過大，分幀處理。
+- [ ] 驗證沙子比目前更密，且每顆沙是 1 pixel。
+- [ ] 驗證畫面放大後仍是像素風。
+- [ ] 驗證放桶後沙子會自然往下流。
+- [ ] 驗證連續放桶不卡。
+- [ ] 執行 `node --check app.js`。
+- [ ] 測試本機網址：`http://127.0.0.1:57512/index.html`
+- [ ] 完成後提交 commit。
+
+下次執行提示詞：
+
+```text
+請建立 Git 分支 engine/bitmap-sand，將 Sand Pixel Sorter 的沙子核心重構為 bitmap sand engine。每顆沙是一個 bitmap pixel，不再是 JS 物件或 Phaser circle。使用 Uint8Array colorGrid 儲存沙子顏色，0 代表空格，1..N 代表顏色。使用 active queue 只更新會動的 cell，流動規則為下、左下、右下。渲染層改成 ImageData / CanvasTexture，只畫一張低解析度 bitmap，顯示時用 nearest-neighbor / image-rendering: pixelated 等比例放大。保留現有輸送帶、水桶、X 軸底層吸沙、滿桶消除與死鎖邏輯。完成後測試 http://127.0.0.1:57512/index.html、執行 node --check app.js，最後 commit。
+```
