@@ -1119,6 +1119,7 @@ class SandSorterScene extends Phaser.Scene {
     this.slotObjects = [];
     this.frameObjects = [];
     this.beltMaskObjects = [];
+    this.beltSegmentObjects = [];
     this.beltOffset = 0;
     this.slotWidth = 92;
     this.slotGap = 14;
@@ -1146,6 +1147,9 @@ class SandSorterScene extends Phaser.Scene {
     this.beltLoopWidth = this.slotStep * SLOT_COUNT;
     this.beltStartX = (this.canvasWidth - this.beltLoopWidth) / 2;
     this.beltEndX = this.beltStartX + this.beltLoopWidth;
+    this.beltCenterY = this.slotY + 38;
+    this.beltHeight = 88;
+    this.beltSegmentSpacing = 42;
 
     this.drawFrame();
     this.createSandBitmapLayer();
@@ -1185,6 +1189,7 @@ class SandSorterScene extends Phaser.Scene {
   drawFrame() {
     this.frameObjects.forEach((object) => object.destroy());
     this.frameObjects = [];
+    this.beltSegmentObjects = [];
 
     const frame = this.add.rectangle(
       this.canvasWidth / 2,
@@ -1200,15 +1205,45 @@ class SandSorterScene extends Phaser.Scene {
       this.boardSize + 14,
       0xf1d495
     );
-    const beltBack = this.add.rectangle(this.canvasWidth / 2, this.slotY + 38, this.beltLoopWidth + 28, 92, 0x87664d);
-    beltBack.setStrokeStyle(3, 0x6d4c38, 1);
-    this.frameObjects.push(frame, backing, beltBack);
+    this.frameObjects.push(frame, backing);
+    this.createConveyorVisuals();
+  }
 
-    for (let index = 0; index < SLOT_COUNT + 1; index += 1) {
-      const x = this.beltStartX + index * this.slotStep - 10;
-      const arrow = this.add.triangle(x, this.slotY + 38, -8, -10, -8, 10, 10, 0, 0xd9c09a, 0.46);
-      this.frameObjects.push(arrow);
+  createConveyorVisuals() {
+    const beltX = this.beltStartX - 18;
+    const beltY = this.beltCenterY - this.beltHeight / 2;
+    const beltWidth = this.beltLoopWidth + 36;
+    const rollerRadius = this.beltHeight / 2 + 4;
+
+    const beltBase = this.add.graphics();
+    beltBase.fillStyle(0x6d4c38, 1);
+    beltBase.lineStyle(3, 0x4e372c, 1);
+    beltBase.fillRoundedRect(beltX, beltY, beltWidth, this.beltHeight, 18);
+    beltBase.strokeRoundedRect(beltX, beltY, beltWidth, this.beltHeight, 18);
+
+    const beltSurface = this.add.graphics();
+    beltSurface.fillStyle(0x3f3633, 1);
+    beltSurface.fillRoundedRect(this.beltStartX - 8, beltY + 12, this.beltLoopWidth + 16, this.beltHeight - 24, 13);
+
+    this.frameObjects.push(beltBase, beltSurface);
+
+    const segmentCount = Math.ceil(this.beltLoopWidth / this.beltSegmentSpacing) + 2;
+    for (let index = 0; index < segmentCount; index += 1) {
+      const segment = this.add.rectangle(0, this.beltCenterY, 16, this.beltHeight - 28, 0xd6c2a0, 0.26);
+      segment.setAngle(-18);
+      this.beltSegmentObjects.push(segment);
+      this.frameObjects.push(segment);
     }
+
+    const topRail = this.add.rectangle(this.canvasWidth / 2, beltY + 11, beltWidth - 22, 6, 0xc09a6a, 0.95);
+    const bottomRail = this.add.rectangle(this.canvasWidth / 2, beltY + this.beltHeight - 11, beltWidth - 22, 6, 0x5a4235, 0.95);
+    const leftRoller = this.add.circle(this.beltStartX - 12, this.beltCenterY, rollerRadius, 0x765541, 1);
+    const rightRoller = this.add.circle(this.beltEndX + 12, this.beltCenterY, rollerRadius, 0x765541, 1);
+    leftRoller.setStrokeStyle(3, 0x4e372c, 1);
+    rightRoller.setStrokeStyle(3, 0x4e372c, 1);
+    this.frameObjects.push(topRail, bottomRail, leftRoller, rightRoller);
+
+    this.positionBeltSegments();
   }
 
   createSandBitmapLayer() {
@@ -1243,8 +1278,20 @@ class SandSorterScene extends Phaser.Scene {
       0,
       this.beltLoopWidth
     );
+    this.positionBeltSegments();
     this.positionBucketSlots();
     this.updateSandAutomata(delta);
+  }
+
+  positionBeltSegments() {
+    this.beltSegmentObjects.forEach((segment, index) => {
+      const wrappedOffset = Phaser.Math.Wrap(
+        index * this.beltSegmentSpacing + this.beltOffset,
+        0,
+        this.beltLoopWidth
+      );
+      segment.setPosition(this.beltStartX + wrappedOffset, this.beltCenterY);
+    });
   }
 
   positionBucketSlots() {
@@ -1271,22 +1318,17 @@ class SandSorterScene extends Phaser.Scene {
       const center = this.getSlotCenter(slotIndex);
       const container = this.add.container(center.x, center.y);
       container.setData("slotIndex", slotIndex);
-      const background = this.add.rectangle(0, 0, 84, 78, 0xffffff, 0.82);
-      background.setStrokeStyle(2, bucket ? colorValue(bucket.color) : 0xc9b18a, bucket ? 0.95 : 0.58);
-      container.add(background);
 
       if (bucket === null) {
-        const emptyText = this.add.text(0, 0, `槽 ${slotIndex + 1}`, {
-          color: "#8d7462",
-          fontFamily: "Microsoft JhengHei, sans-serif",
-          fontSize: "16px",
-          fontStyle: "bold",
-        });
-        emptyText.setOrigin(0.5);
-        container.add(emptyText);
+        const slotTick = this.add.rectangle(0, 27, 32, 4, 0xd9c09a, 0.36);
+        slotTick.setStrokeStyle(1, 0x4e372c, 0.2);
+        container.add(slotTick);
       } else {
+        const bucketShadow = this.add.ellipse(0, 27, 50, 10, 0x1e1816, 0.24);
         const bucketVisual = this.createBucketVisual(bucket.color);
-        const progressPercent = Math.min(100, Math.round((bucket.amount / bucket.capacity) * 100));
+        const progressPercent = bucket.isFull()
+          ? 100
+          : Math.floor((bucket.amount / bucket.capacity) * 100);
         const progressText = this.add.text(0, 23, `${progressPercent}%`, {
           color: "#2e332f",
           fontFamily: "Microsoft JhengHei, sans-serif",
@@ -1295,7 +1337,7 @@ class SandSorterScene extends Phaser.Scene {
         });
         progressText.setOrigin(0.5);
         progressText.setStroke("#ffffff", 4);
-        container.add([bucketVisual, progressText]);
+        container.add([bucketShadow, bucketVisual, progressText]);
       }
 
       this.slotObjects.push(container);
@@ -1573,14 +1615,22 @@ function renderAvailableColors() {
   });
 }
 
+function placeableBucketColors() {
+  if (!gameState?.field || gameState.field.remainingTotal <= 0 || gameState.phase === "won") {
+    return [];
+  }
+  return BUCKET_COLORS.filter((color) => gameState.field.hasColor(color));
+}
+
 function renderBucketPalette() {
-  const signature = BUCKET_COLORS.join("|");
+  const colors = placeableBucketColors();
+  const signature = colors.join("|");
   if (bucketButtons.size === 0 || bucketPaletteSignature !== signature) {
     bucketPaletteSignature = signature;
     bucketButtons = new Map();
     elements.bucketPalette.replaceChildren();
 
-    BUCKET_COLORS.forEach((color) => {
+    colors.forEach((color) => {
       const button = document.createElement("button");
       button.className = "bucket-button";
       button.type = "button";
@@ -1703,6 +1753,12 @@ function renderUI({ updateSlots = true } = {}) {
 
 async function handleBucketClick(color) {
   if (gameState.phase !== "running") {
+    return;
+  }
+
+  if (!gameState.field.hasColor(color)) {
+    setMessage(`${colorLabel(color)}桶已沒有可吸收的沙子。`);
+    renderUI({ updateSlots: false });
     return;
   }
 
