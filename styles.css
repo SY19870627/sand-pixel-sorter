@@ -190,6 +190,7 @@ h2 {
   display: block;
   width: 100%;
   height: auto;
+  image-rendering: pixelated;
 }
 
 .belt-panel {

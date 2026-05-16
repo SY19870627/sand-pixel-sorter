@@ -1,8 +1,7 @@
-const SAND_UNIT_VALUE = 10;
+const SAND_UNIT_VALUE = 1;
 const BUCKET_CAPACITY = 100;
 const SLOT_COUNT = 5;
-const PIXEL_SCALE = 4;
-const SUCTION_ZONE_HEIGHT = 116;
+const PIXEL_SCALE = 16;
 const SUCK_TWEEN_MS = 68;
 const SUCK_TRAIL_MS = 120;
 const SUCK_TRAIL_COUNT = 7;
@@ -10,16 +9,17 @@ const ABSORB_ROUND_DELAY_MS = 6;
 const BUCKET_REMOVE_DELAY_MS = 36;
 const BELT_SPEED_PX_PER_SECOND = 54;
 const BUCKET_SUCTION_HALF_WIDTH = 22;
-const BOTTOM_LAYER_MARGIN = 54;
-const STREAM_SUCK_INTERVAL_MS = 12;
+const STREAM_SUCK_INTERVAL_MS = 8;
 const IDLE_SCAN_INTERVAL_MS = 48;
 const SLOT_UI_REFRESH_MS = 140;
-const CA_STEP_MS = 24;
-const CA_MAX_STEPS_PER_FRAME = 3;
-const CA_WAKE_COLUMN_RADIUS = 4;
-const CA_WAKE_ABOVE_ROWS = 24;
-const CA_WAKE_BELOW_ROWS = 2;
-const CA_RENDER_LERP = 0.42;
+const SAND_STEP_MS = 16;
+const SAND_STEPS_PER_FRAME = 4;
+const ACTIVE_CELL_BUDGET = 4200;
+const WAKE_COLUMN_RADIUS = 9;
+const WAKE_ABOVE_ROWS = 72;
+const WAKE_BELOW_ROWS = 4;
+const EMPTY_COLOR_ID = 0;
+const SAND_TEXTURE_KEY = "sand-bitmap";
 
 const COLOR_DATA = {
   red: { label: "紅", hex: "#df5148", value: 0xdf5148 },
@@ -36,6 +36,22 @@ const COLOR_DATA = {
 
 const COLOR_ORDER = ["sky", "brown", "skin", "dark", "white", "red", "yellow", "blue", "green", "purple"];
 const BUCKET_COLORS = ["sky", "brown", "skin", "dark", "white", "red", "yellow", "blue"];
+const COLOR_ID_BY_KEY = new Map(COLOR_ORDER.map((color, index) => [color, index + 1]));
+const COLOR_KEY_BY_ID = ["empty", ...COLOR_ORDER];
+
+const RGBA_BY_COLOR_ID = (() => {
+  const rgba = [[0, 0, 0, 0]];
+  COLOR_ORDER.forEach((color) => {
+    const hex = COLOR_DATA[color].hex.replace("#", "");
+    rgba.push([
+      Number.parseInt(hex.slice(0, 2), 16),
+      Number.parseInt(hex.slice(2, 4), 16),
+      Number.parseInt(hex.slice(4, 6), 16),
+      255,
+    ]);
+  });
+  return rgba;
+})();
 
 const PAINTING_ROWS = [
   "ssssssssssssssss",
@@ -103,33 +119,19 @@ function buildPaintingLevel(patternRows) {
 
 const LEVEL_ROWS = buildPaintingLevel(upscalePainting(PAINTING_ROWS, PIXEL_SCALE));
 
-class SandParticle {
-  constructor({ id, color, gridX, gridY }) {
-    this.id = id;
-    this.color = color;
-    this.gridX = gridX;
-    this.gridY = gridY;
-    this.cellX = gridX;
-    this.cellY = gridY;
-    this.x = gridX;
-    this.y = gridY;
-    this.targetX = gridX;
-    this.targetY = gridY;
-    this.offsetX = 0;
-    this.offsetY = 0;
-    this.state = "active";
-    this.sprite = null;
-    this.mode = "static";
-    this.hasWorldPosition = false;
-  }
+function colorId(color) {
+  return COLOR_ID_BY_KEY.get(color) ?? EMPTY_COLOR_ID;
+}
+
+function colorFromId(id) {
+  return COLOR_KEY_BY_ID[id] ?? null;
 }
 
 class SandField {
   constructor(rows) {
     this.height = rows.length;
     this.width = rows[0]?.length ?? 0;
-    this.cells = Array.from({ length: this.height }, () => Array.from({ length: this.width }, () => null));
-    this.particles = [];
+    this.colorGrid = new Uint8Array(this.width * this.height);
     this.remainingTotal = 0;
 
     rows.forEach((row, rowIndex) => {
@@ -138,53 +140,75 @@ class SandField {
       }
 
       row.forEach((color, columnIndex) => {
-        const particle = new SandParticle({
-          id: this.particles.length,
-          color,
-          gridX: columnIndex,
-          gridY: rowIndex,
-        });
-        this.particles.push(particle);
-        this.cells[rowIndex][columnIndex] = particle;
-        this.remainingTotal += SAND_UNIT_VALUE;
+        const id = colorId(color);
+        this.colorGrid[this.index(columnIndex, rowIndex)] = id;
+        if (id !== EMPTY_COLOR_ID) {
+          this.remainingTotal += SAND_UNIT_VALUE;
+        }
       });
     });
   }
 
-  activeParticles() {
-    return this.particles.filter((particle) => particle.state === "active");
+  index(cellX, cellY) {
+    return cellY * this.width + cellX;
   }
 
-  markSucked(particle) {
-    if (particle.state !== "active") {
-      return;
-    }
-    if (this.cells[particle.cellY]?.[particle.cellX] === particle) {
-      this.cells[particle.cellY][particle.cellX] = null;
-    }
-    particle.state = "sucked";
-    this.remainingTotal = Math.max(0, this.remainingTotal - SAND_UNIT_VALUE);
+  cellX(index) {
+    return index % this.width;
+  }
+
+  cellY(index) {
+    return Math.floor(index / this.width);
   }
 
   isInsideCell(cellX, cellY) {
     return cellX >= 0 && cellX < this.width && cellY >= 0 && cellY < this.height;
   }
 
-  isCellEmpty(cellX, cellY) {
-    return this.isInsideCell(cellX, cellY) && this.cells[cellY][cellX] === null;
+  isInsideIndex(index) {
+    return index >= 0 && index < this.colorGrid.length;
   }
 
-  moveParticleToCell(particle, cellX, cellY) {
-    if (!this.isInsideCell(cellX, cellY) || !this.isCellEmpty(cellX, cellY)) {
+  getCell(cellX, cellY) {
+    if (!this.isInsideCell(cellX, cellY)) {
+      return EMPTY_COLOR_ID;
+    }
+    return this.colorGrid[this.index(cellX, cellY)];
+  }
+
+  getIndex(index) {
+    if (!this.isInsideIndex(index)) {
+      return EMPTY_COLOR_ID;
+    }
+    return this.colorGrid[index];
+  }
+
+  isCellEmpty(cellX, cellY) {
+    return this.isInsideCell(cellX, cellY) && this.getCell(cellX, cellY) === EMPTY_COLOR_ID;
+  }
+
+  clearIndex(index) {
+    if (!this.isInsideIndex(index) || this.colorGrid[index] === EMPTY_COLOR_ID) {
       return false;
     }
 
-    if (this.cells[particle.cellY]?.[particle.cellX] === particle) {
-      this.cells[particle.cellY][particle.cellX] = null;
+    this.colorGrid[index] = EMPTY_COLOR_ID;
+    this.remainingTotal = Math.max(0, this.remainingTotal - SAND_UNIT_VALUE);
+    return true;
+  }
+
+  moveIndex(fromIndex, toIndex) {
+    if (!this.isInsideIndex(fromIndex) || !this.isInsideIndex(toIndex)) {
+      return false;
     }
-    this.cells[cellY][cellX] = particle;
-    particle.cellX = cellX;
-    particle.cellY = cellY;
+
+    const color = this.colorGrid[fromIndex];
+    if (color === EMPTY_COLOR_ID || this.colorGrid[toIndex] !== EMPTY_COLOR_ID) {
+      return false;
+    }
+
+    this.colorGrid[toIndex] = color;
+    this.colorGrid[fromIndex] = EMPTY_COLOR_ID;
     return true;
   }
 
@@ -362,35 +386,39 @@ class SandSorterScene extends Phaser.Scene {
     this.slotObjects = [];
     this.frameObjects = [];
     this.beltMaskObjects = [];
-    this.ballRadius = 3.08;
-    this.ballSpacing = 6.5;
     this.beltOffset = 0;
     this.slotWidth = 92;
     this.slotGap = 14;
     this.lastSlotRenderSignature = "";
-    this.staticSandLayer = null;
-    this.caAccumulator = 0;
-    this.activeCellKeys = new Set();
+    this.sandTexture = null;
+    this.sandContext = null;
+    this.sandImage = null;
+    this.sandImageData = null;
+    this.sandPixels = null;
+    this.activeCells = new Set();
+    this.dirtyCells = new Set();
+    this.sandAccumulator = 0;
+    this.pixelWorldSize = 1;
+    this.effectRadius = 2;
   }
 
   create() {
     this.canvasWidth = this.scale.width;
     this.canvasHeight = this.scale.height;
-    this.boardSize = LEVEL_ROWS[0].length * this.ballSpacing;
+    this.boardSize = 416;
     this.boardX = (this.canvasWidth - this.boardSize) / 2;
     this.boardY = 24;
     this.boardBottom = this.boardY + this.boardSize;
-    this.suctionTopY = this.boardBottom - SUCTION_ZONE_HEIGHT;
+    this.pixelWorldSize = this.boardSize / gameState.field.width;
+    this.effectRadius = Math.max(1.6, this.pixelWorldSize * 1.2);
     this.slotY = this.boardBottom + 78;
     this.slotStep = this.slotWidth + this.slotGap;
     this.beltLoopWidth = this.slotStep * SLOT_COUNT;
     this.beltStartX = (this.canvasWidth - this.beltLoopWidth) / 2;
     this.beltEndX = this.beltStartX + this.beltLoopWidth;
 
-    this.matter.world.setGravity(0, 0.72);
     this.drawFrame();
-    this.createStaticSandLayer();
-    this.createBoundaries();
+    this.createSandBitmapLayer();
     this.createBeltMasks();
 
     sceneRef = this;
@@ -442,18 +470,9 @@ class SandSorterScene extends Phaser.Scene {
       this.boardSize + 14,
       0xf1d495
     );
-    const suctionZone = this.add.rectangle(
-      this.canvasWidth / 2,
-      this.suctionTopY + SUCTION_ZONE_HEIGHT / 2,
-      this.boardSize,
-      SUCTION_ZONE_HEIGHT,
-      0xffffff,
-      0.12
-    );
-    suctionZone.setStrokeStyle(2, 0xffffff, 0.18);
     const beltBack = this.add.rectangle(this.canvasWidth / 2, this.slotY + 38, this.beltLoopWidth + 28, 92, 0x87664d);
     beltBack.setStrokeStyle(3, 0x6d4c38, 1);
-    this.frameObjects.push(frame, backing, suctionZone, beltBack);
+    this.frameObjects.push(frame, backing, beltBack);
 
     for (let index = 0; index < SLOT_COUNT + 1; index += 1) {
       const x = this.beltStartX + index * this.slotStep - 10;
@@ -462,139 +481,31 @@ class SandSorterScene extends Phaser.Scene {
     }
   }
 
-  createBoundaries() {
-    const thickness = 28;
-    const left = this.boardX - thickness / 2;
-    const right = this.boardX + this.boardSize + thickness / 2;
-    const centerX = this.boardX + this.boardSize / 2;
-    const centerY = this.boardY + this.boardSize / 2;
-    const bottom = this.boardBottom + thickness / 2;
-    const top = this.boardY - thickness / 2;
-
-    this.matter.add.rectangle(left, centerY, thickness, this.boardSize + thickness * 2, { isStatic: true });
-    this.matter.add.rectangle(right, centerY, thickness, this.boardSize + thickness * 2, { isStatic: true });
-    this.matter.add.rectangle(centerX, bottom, this.boardSize + thickness * 2, thickness, { isStatic: true });
-    this.matter.add.rectangle(centerX, top, this.boardSize + thickness * 2, thickness, { isStatic: true });
-  }
-
-  createStaticSandLayer() {
-    this.staticSandLayer?.destroy();
-    this.staticSandLayer = this.add.graphics();
-  }
-
-  getCellWorldPosition(cellX, cellY, particle = null) {
-    const stagger = cellY % 2 === 0 ? 0 : this.ballSpacing * 0.22;
-    return {
-      x: this.boardX + cellX * this.ballSpacing + this.ballRadius + stagger + (particle?.offsetX ?? 0),
-      y: this.boardY + cellY * this.ballSpacing + this.ballRadius + (particle?.offsetY ?? 0),
-    };
-  }
-
-  getInitialParticlePosition(particle) {
-    particle.offsetX = Phaser.Math.FloatBetween(-0.8, 0.8);
-    particle.offsetY = Phaser.Math.FloatBetween(-0.8, 0.8);
-    return this.getCellWorldPosition(particle.cellX, particle.cellY, particle);
-  }
-
-  ensureParticleWorldPosition(particle) {
-    if (particle.hasWorldPosition) {
-      return;
+  createSandBitmapLayer() {
+    if (this.sandImage) {
+      this.sandImage.destroy();
+      this.sandImage = null;
+    }
+    if (this.textures.exists(SAND_TEXTURE_KEY)) {
+      this.textures.remove(SAND_TEXTURE_KEY);
     }
 
-    const position = this.getInitialParticlePosition(particle);
-    particle.x = position.x;
-    particle.y = position.y;
-    particle.targetX = position.x;
-    particle.targetY = position.y;
-    particle.hasWorldPosition = true;
-  }
-
-  getParticlePosition(particle) {
-    if (particle.sprite) {
-      return {
-        x: particle.sprite.x,
-        y: particle.sprite.y,
-      };
-    }
-
-    this.ensureParticleWorldPosition(particle);
-    return {
-      x: particle.x,
-      y: particle.y,
-    };
-  }
-
-  renderStaticSand() {
-    if (!this.staticSandLayer) {
-      return;
-    }
-
-    this.staticSandLayer.clear();
-    for (const particle of gameState.field.particles) {
-      if (particle.state !== "active" || particle.mode !== "static") {
-        continue;
-      }
-
-      this.ensureParticleWorldPosition(particle);
-      particle.x += (particle.targetX - particle.x) * CA_RENDER_LERP;
-      particle.y += (particle.targetY - particle.y) * CA_RENDER_LERP;
-      if (Math.abs(particle.targetX - particle.x) < 0.08) {
-        particle.x = particle.targetX;
-      }
-      if (Math.abs(particle.targetY - particle.y) < 0.08) {
-        particle.y = particle.targetY;
-      }
-      this.staticSandLayer.fillStyle(colorValue(particle.color), 0.96);
-      this.staticSandLayer.fillCircle(particle.x, particle.y, this.ballRadius);
-    }
-  }
-
-  getSlotCenter(slotIndex) {
-    const wrappedOffset = Phaser.Math.Wrap(slotIndex * this.slotStep + this.beltOffset, 0, this.beltLoopWidth);
-    return {
-      x: this.beltStartX + wrappedOffset + this.slotWidth / 2,
-      y: this.slotY + 38,
-    };
-  }
-
-  findLeftmostEmptySlot(slots) {
-    return slots
-      .map((bucket, slotIndex) => {
-        if (bucket !== null) {
-          return null;
-        }
-
-        return {
-          slotIndex,
-          x: this.getSlotCenter(slotIndex).x,
-        };
-      })
-      .filter((candidate) => candidate !== null)
-      .sort((a, b) => a.x - b.x)[0]?.slotIndex ?? -1;
+    this.sandTexture = this.textures.createCanvas(SAND_TEXTURE_KEY, gameState.field.width, gameState.field.height);
+    this.sandContext = this.sandTexture.getContext();
+    this.sandContext.imageSmoothingEnabled = false;
+    this.sandImageData = this.sandContext.createImageData(gameState.field.width, gameState.field.height);
+    this.sandPixels = this.sandImageData.data;
+    this.sandImage = this.add.image(this.boardX, this.boardY, SAND_TEXTURE_KEY);
+    this.sandImage.setOrigin(0, 0);
+    this.sandImage.setDisplaySize(this.boardSize, this.boardSize);
   }
 
   syncFromState(state) {
-    this.activeCellKeys.clear();
-    this.caAccumulator = 0;
-    state.field.particles.forEach((particle) => {
-      if (particle.sprite?.body) {
-        this.matter.world.remove(particle.sprite.body);
-      }
-      particle.sprite?.destroy();
-      particle.sprite = null;
-      if (particle.state === "sucked") {
-        return;
-      }
-
-      this.ensureParticleWorldPosition(particle);
-      const target = this.getCellWorldPosition(particle.cellX, particle.cellY, particle);
-      particle.x = target.x;
-      particle.y = target.y;
-      particle.targetX = target.x;
-      particle.targetY = target.y;
-      particle.mode = "static";
-    });
-    this.renderStaticSand();
+    this.activeCells.clear();
+    this.dirtyCells.clear();
+    this.sandAccumulator = 0;
+    this.markAllSandDirty(state.field);
+    this.renderDirtySand();
     this.updateBucketSlots(state.conveyor.slots);
   }
 
@@ -668,6 +579,96 @@ class SandSorterScene extends Phaser.Scene {
     this.bringBeltMasksToTop();
   }
 
+  getSlotCenter(slotIndex) {
+    const wrappedOffset = Phaser.Math.Wrap(slotIndex * this.slotStep + this.beltOffset, 0, this.beltLoopWidth);
+    return {
+      x: this.beltStartX + wrappedOffset + this.slotWidth / 2,
+      y: this.slotY + 38,
+    };
+  }
+
+  findLeftmostEmptySlot(slots) {
+    return slots
+      .map((bucket, slotIndex) => {
+        if (bucket !== null) {
+          return null;
+        }
+
+        return {
+          slotIndex,
+          x: this.getSlotCenter(slotIndex).x,
+        };
+      })
+      .filter((candidate) => candidate !== null)
+      .sort((a, b) => a.x - b.x)[0]?.slotIndex ?? -1;
+  }
+
+  markAllSandDirty(field) {
+    for (let index = 0; index < field.colorGrid.length; index += 1) {
+      this.dirtyCells.add(index);
+    }
+  }
+
+  markDirty(index) {
+    if (gameState.field.isInsideIndex(index)) {
+      this.dirtyCells.add(index);
+    }
+  }
+
+  writePixel(index) {
+    const color = gameState.field.getIndex(index);
+    const rgba = RGBA_BY_COLOR_ID[color] ?? RGBA_BY_COLOR_ID[EMPTY_COLOR_ID];
+    const offset = index * 4;
+    this.sandPixels[offset] = rgba[0];
+    this.sandPixels[offset + 1] = rgba[1];
+    this.sandPixels[offset + 2] = rgba[2];
+    this.sandPixels[offset + 3] = rgba[3];
+  }
+
+  renderDirtySand() {
+    if (this.dirtyCells.size === 0 || !this.sandTexture) {
+      return;
+    }
+
+    this.dirtyCells.forEach((index) => this.writePixel(index));
+    this.dirtyCells.clear();
+    this.sandContext.putImageData(this.sandImageData, 0, 0);
+    this.sandTexture.refresh();
+  }
+
+  worldXToCellX(worldX) {
+    return Phaser.Math.Clamp(Math.floor((worldX - this.boardX) / this.pixelWorldSize), 0, gameState.field.width - 1);
+  }
+
+  worldYToCellY(worldY) {
+    return Phaser.Math.Clamp(Math.floor((worldY - this.boardY) / this.pixelWorldSize), 0, gameState.field.height - 1);
+  }
+
+  cellToWorldPosition(cellX, cellY) {
+    return {
+      x: this.boardX + (cellX + 0.5) * this.pixelWorldSize,
+      y: this.boardY + (cellY + 0.5) * this.pixelWorldSize,
+    };
+  }
+
+  getBucketColumnRange(slotIndex) {
+    const slotCenter = this.getSlotCenter(slotIndex);
+    return {
+      minX: this.worldXToCellX(slotCenter.x - BUCKET_SUCTION_HALF_WIDTH),
+      maxX: this.worldXToCellX(slotCenter.x + BUCKET_SUCTION_HALF_WIDTH),
+    };
+  }
+
+  getBottomSandIndexInColumn(cellX) {
+    for (let cellY = gameState.field.height - 1; cellY >= 0; cellY -= 1) {
+      const index = gameState.field.index(cellX, cellY);
+      if (gameState.field.getIndex(index) !== EMPTY_COLOR_ID) {
+        return index;
+      }
+    }
+    return null;
+  }
+
   getAvailableColorsInSuctionZone() {
     const colors = new Set();
     gameState.conveyor.slots.forEach((bucket, slotIndex) => {
@@ -675,13 +676,16 @@ class SandSorterScene extends Phaser.Scene {
         return;
       }
 
-      const slotCenter = this.getSlotCenter(slotIndex);
-      for (const particle of gameState.field.particles) {
-        if (particle.state !== "active") {
+      const { minX, maxX } = this.getBucketColumnRange(slotIndex);
+      for (let cellX = minX; cellX <= maxX; cellX += 1) {
+        const index = this.getBottomSandIndexInColumn(cellX);
+        if (index === null) {
           continue;
         }
-        if (this.isParticleInBucketColumn(particle, slotCenter.x)) {
-          colors.add(particle.color);
+
+        const color = colorFromId(gameState.field.getIndex(index));
+        if (color !== null) {
+          colors.add(color);
         }
       }
     });
@@ -689,74 +693,58 @@ class SandSorterScene extends Phaser.Scene {
     return [...colors];
   }
 
-  isParticleInBucketColumn(particle, bucketX) {
-    if (particle.state !== "active") {
-      return false;
-    }
-
-    const { x: particleX, y: particleY } = this.getParticlePosition(particle);
-
-    return (
-      Math.abs(particleX - bucketX) <= BUCKET_SUCTION_HALF_WIDTH &&
-      particleY >= this.boardBottom - BOTTOM_LAYER_MARGIN &&
-      particleY <= this.boardBottom + this.ballRadius * 2
-    );
-  }
-
   hasAnyBucketAbsorbable() {
     return gameState.conveyor.slots.some((bucket, slotIndex) => {
       if (bucket === null || bucket.isFull()) {
         return false;
       }
-      return this.findAbsorbableParticle(bucket.color, new Set(), slotIndex) !== null;
+      return this.findAbsorbableCell(bucket.color, new Set(), slotIndex) !== null;
     });
   }
 
-  findAbsorbableParticle(color, reservedParticleIds = new Set(), slotIndex = null) {
+  findAbsorbableCell(color, reservedCellIndices = new Set(), slotIndex = null) {
     if (slotIndex === null) {
       return null;
     }
 
+    const targetColorId = colorId(color);
     const slotCenter = this.getSlotCenter(slotIndex);
-    let bestParticle = null;
+    const { minX, maxX } = this.getBucketColumnRange(slotIndex);
+    let bestCell = null;
     let bestY = -Infinity;
-    let bestX = -Infinity;
+    let bestDistance = Infinity;
 
-    for (const particle of gameState.field.particles) {
-      if (
-        particle.state !== "active" ||
-        particle.color !== color ||
-        reservedParticleIds.has(particle.id) ||
-        !this.isParticleInBucketColumn(particle, slotCenter.x)
-      ) {
+    for (let cellX = minX; cellX <= maxX; cellX += 1) {
+      const index = this.getBottomSandIndexInColumn(cellX);
+      if (index === null || reservedCellIndices.has(index) || gameState.field.getIndex(index) !== targetColorId) {
         continue;
       }
 
-      const { x: particleX, y: particleY } = this.getParticlePosition(particle);
-      if (particleY > bestY || (particleY === bestY && particleX > bestX)) {
-        bestParticle = particle;
-        bestY = particleY;
-        bestX = particleX;
+      const cellY = gameState.field.cellY(index);
+      const worldPosition = this.cellToWorldPosition(cellX, cellY);
+      const distance = Math.abs(worldPosition.x - slotCenter.x);
+      if (cellY > bestY || (cellY === bestY && distance < bestDistance)) {
+        bestCell = {
+          index,
+          id: index,
+          cellX,
+          cellY,
+          color,
+          colorId: targetColorId,
+        };
+        bestY = cellY;
+        bestDistance = distance;
       }
     }
 
-    return bestParticle;
-  }
-
-  getCellKey(cellX, cellY) {
-    return `${cellX},${cellY}`;
-  }
-
-  parseCellKey(key) {
-    const [cellX, cellY] = key.split(",").map(Number);
-    return { cellX, cellY };
+    return bestCell;
   }
 
   activateCell(cellX, cellY) {
     if (!gameState.field.isInsideCell(cellX, cellY)) {
       return;
     }
-    this.activeCellKeys.add(this.getCellKey(cellX, cellY));
+    this.activeCells.add(gameState.field.index(cellX, cellY));
   }
 
   activateCellNeighborhood(cellX, cellY) {
@@ -767,17 +755,30 @@ class SandSorterScene extends Phaser.Scene {
     }
   }
 
-  updateParticleTarget(particle) {
-    const target = this.getCellWorldPosition(particle.cellX, particle.cellY, particle);
-    particle.targetX = target.x;
-    particle.targetY = target.y;
+  wakeLocalSand(cellX, cellY) {
+    for (let y = cellY - WAKE_ABOVE_ROWS; y <= cellY + WAKE_BELOW_ROWS; y += 1) {
+      for (let x = cellX - WAKE_COLUMN_RADIUS; x <= cellX + WAKE_COLUMN_RADIUS; x += 1) {
+        this.activateCell(x, y);
+      }
+    }
   }
 
-  tryMoveParticle(particle) {
-    const candidates = [{ x: particle.cellX, y: particle.cellY + 1 }];
+  tryMoveCell(index) {
+    const color = gameState.field.getIndex(index);
+    if (color === EMPTY_COLOR_ID) {
+      return false;
+    }
+
+    const cellX = gameState.field.cellX(index);
+    const cellY = gameState.field.cellY(index);
+    if (cellY >= gameState.field.height - 1) {
+      return false;
+    }
+
+    const candidates = [{ x: cellX, y: cellY + 1 }];
     const diagonalOrder = Phaser.Math.Between(0, 1) === 0 ? [-1, 1] : [1, -1];
     diagonalOrder.forEach((direction) => {
-      candidates.push({ x: particle.cellX + direction, y: particle.cellY + 1 });
+      candidates.push({ x: cellX + direction, y: cellY + 1 });
     });
 
     for (const candidate of candidates) {
@@ -785,15 +786,15 @@ class SandSorterScene extends Phaser.Scene {
         continue;
       }
 
-      const oldX = particle.cellX;
-      const oldY = particle.cellY;
-      if (!gameState.field.moveParticleToCell(particle, candidate.x, candidate.y)) {
+      const targetIndex = gameState.field.index(candidate.x, candidate.y);
+      if (!gameState.field.moveIndex(index, targetIndex)) {
         continue;
       }
 
-      this.updateParticleTarget(particle);
-      this.activateCellNeighborhood(oldX, oldY);
-      this.activateCellNeighborhood(particle.cellX, particle.cellY);
+      this.markDirty(index);
+      this.markDirty(targetIndex);
+      this.activateCellNeighborhood(cellX, cellY);
+      this.activateCellNeighborhood(candidate.x, candidate.y);
       return true;
     }
 
@@ -801,77 +802,43 @@ class SandSorterScene extends Phaser.Scene {
   }
 
   stepActiveSand() {
-    if (this.activeCellKeys.size === 0) {
+    if (this.activeCells.size === 0) {
       return false;
     }
 
-    const activeCells = [...this.activeCellKeys]
-      .map((key) => this.parseCellKey(key))
-      .sort((a, b) => b.cellY - a.cellY || Phaser.Math.Between(-1, 1));
-    this.activeCellKeys.clear();
+    const activeCells = [...this.activeCells].sort((a, b) => {
+      const rowDelta = gameState.field.cellY(b) - gameState.field.cellY(a);
+      return rowDelta !== 0 ? rowDelta : Phaser.Math.Between(-1, 1);
+    });
+    this.activeCells.clear();
 
     let movedAny = false;
-    const movedParticleIds = new Set();
-    for (const cell of activeCells) {
-      const particle = gameState.field.cells[cell.cellY]?.[cell.cellX] ?? null;
-      if (!particle || particle.state !== "active" || movedParticleIds.has(particle.id)) {
+    let processed = 0;
+    for (const index of activeCells) {
+      if (processed >= ACTIVE_CELL_BUDGET) {
+        this.activeCells.add(index);
         continue;
       }
 
-      if (this.tryMoveParticle(particle)) {
-        movedParticleIds.add(particle.id);
-        movedAny = true;
-      }
+      processed += 1;
+      movedAny = this.tryMoveCell(index) || movedAny;
     }
 
     return movedAny;
   }
 
-  hasAnimatingSand() {
-    return gameState.field.particles.some((particle) => {
-      return (
-        particle.state === "active" &&
-        (Math.abs((particle.targetX ?? particle.x) - particle.x) > 0.08 ||
-          Math.abs((particle.targetY ?? particle.y) - particle.y) > 0.08)
-      );
-    });
-  }
-
   updateSandAutomata(delta) {
-    this.caAccumulator += delta;
+    this.sandAccumulator += delta;
     let stepped = false;
     let stepCount = 0;
-    while (this.caAccumulator >= CA_STEP_MS && stepCount < CA_MAX_STEPS_PER_FRAME) {
-      this.caAccumulator -= CA_STEP_MS;
+    while (this.sandAccumulator >= SAND_STEP_MS && stepCount < SAND_STEPS_PER_FRAME) {
+      this.sandAccumulator -= SAND_STEP_MS;
       stepped = this.stepActiveSand() || stepped;
       stepCount += 1;
     }
 
-    if (stepped || this.activeCellKeys.size > 0 || this.hasAnimatingSand()) {
-      this.renderStaticSand();
-    }
-  }
-
-  wakeLocalSand(originPosition, excludedParticleId = null) {
-    const centerCellX = Phaser.Math.Clamp(
-      Math.round((originPosition.x - this.boardX - this.ballRadius) / this.ballSpacing),
-      0,
-      gameState.field.width - 1
-    );
-    const centerCellY = Phaser.Math.Clamp(
-      Math.round((originPosition.y - this.boardY - this.ballRadius) / this.ballSpacing),
-      0,
-      gameState.field.height - 1
-    );
-
-    for (let y = centerCellY - CA_WAKE_ABOVE_ROWS; y <= centerCellY + CA_WAKE_BELOW_ROWS; y += 1) {
-      for (let x = centerCellX - CA_WAKE_COLUMN_RADIUS; x <= centerCellX + CA_WAKE_COLUMN_RADIUS; x += 1) {
-        const particle = gameState.field.cells[y]?.[x] ?? null;
-        if (particle?.id === excludedParticleId) {
-          continue;
-        }
-        this.activateCell(x, y);
-      }
+    if (stepped || this.dirtyCells.size > 0) {
+      this.renderDirtySand();
     }
   }
 
@@ -899,31 +866,36 @@ class SandSorterScene extends Phaser.Scene {
     }
   }
 
-  async suckParticle(particle, slotIndex) {
+  async suckCell(cell, slotIndex) {
     const slotCenter = this.getSlotCenter(slotIndex);
-    const fromPosition = this.getParticlePosition(particle);
-    const sprite = particle.sprite;
-    this.wakeLocalSand(fromPosition, particle.id);
-    gameState.field.markSucked(particle);
-    this.activateCellNeighborhood(particle.cellX, particle.cellY);
-    particle.mode = "sucked";
+    const fromPosition = this.cellToWorldPosition(cell.cellX, cell.cellY);
 
-    if (sprite?.body) {
-      this.matter.world.remove(sprite.body);
+    if (!gameState.field.clearIndex(cell.index)) {
+      return;
     }
-    particle.sprite = null;
-    this.renderStaticSand();
-    this.spawnAbsorbParticles(fromPosition, slotCenter, particle.color);
 
-    const suckedSprite = sprite ?? this.add.circle(fromPosition.x, fromPosition.y, this.ballRadius, colorValue(particle.color), 0.96);
-    await tweenTo(this, suckedSprite, {
+    this.markDirty(cell.index);
+    this.activateCellNeighborhood(cell.cellX, cell.cellY);
+    this.wakeLocalSand(cell.cellX, cell.cellY);
+    this.renderDirtySand();
+    this.spawnAbsorbParticles(fromPosition, slotCenter, cell.color);
+
+    const suckedPixel = this.add.rectangle(
+      fromPosition.x,
+      fromPosition.y,
+      Math.max(2, this.pixelWorldSize),
+      Math.max(2, this.pixelWorldSize),
+      colorValue(cell.color),
+      0.96
+    );
+    await tweenTo(this, suckedPixel, {
       x: slotCenter.x,
       y: slotCenter.y,
       alpha: 0,
       scale: 0.2,
       duration: SUCK_TWEEN_MS,
       ease: "Cubic.easeIn",
-      onComplete: () => suckedSprite.destroy(),
+      onComplete: () => suckedPixel.destroy(),
     });
   }
 }
@@ -1068,7 +1040,7 @@ async function resolveAbsorption() {
   const pendingAnimations = new Set();
 
   while (gameState.phase === "running" && gameState.conveyor.activeBuckets().length > 0) {
-    const reservedParticleIds = new Set();
+    const reservedCellIndices = new Set();
     let startedThisTick = 0;
 
     for (const bucket of gameState.conveyor.activeBuckets()) {
@@ -1081,20 +1053,20 @@ async function resolveAbsorption() {
         continue;
       }
 
-      const particle = sceneRef?.findAbsorbableParticle(bucket.color, reservedParticleIds, slotIndex) ?? null;
-      if (particle === null) {
+      const cell = sceneRef?.findAbsorbableCell(bucket.color, reservedCellIndices, slotIndex) ?? null;
+      if (cell === null) {
         continue;
       }
 
-      reservedParticleIds.add(particle.id);
+      reservedCellIndices.add(cell.index);
       bucket.absorb();
 
-      setMessage("水桶正在吸入正上方底層沙球。");
+      setMessage("水桶正在吸入正上方底層沙像素。");
       addLog(`${colorLabel(bucket.color)}桶 +${SAND_UNIT_VALUE}。`, bucket.color);
       startedThisTick += 1;
 
       const animation = sceneRef
-        .suckParticle(particle, slotIndex)
+        .suckCell(cell, slotIndex)
         .catch(() => undefined)
         .finally(() => {
           pendingAnimations.delete(animation);
@@ -1112,7 +1084,6 @@ async function resolveAbsorption() {
     }
 
     if (startedThisTick > 0) {
-      // 水桶進度採用節流刷新，避免每吸一顆沙都重建槽位圖形。
       const now = window.performance.now();
       if (now - lastSlotUiRefreshAt >= SLOT_UI_REFRESH_MS) {
         sceneRef?.updateBucketSlots(gameState.conveyor.slots);
@@ -1167,16 +1138,10 @@ function bootPhaser() {
     height: 700,
     backgroundColor: "#f5e7bf",
     scene: SandSorterScene,
-    physics: {
-      default: "matter",
-      matter: {
-        gravity: { y: 0.72 },
-        // 沙粒已改由 Active-Set CA 處理；Matter 保留給邊界與未來少量動態道具。
-        enableSleeping: true,
-        debug: false,
-        positionIterations: 4,
-        velocityIterations: 3,
-      },
+    render: {
+      antialias: false,
+      pixelArt: true,
+      roundPixels: true,
     },
     scale: {
       mode: Phaser.Scale.FIT,
