@@ -21,6 +21,7 @@ const MAX_SUCKS_PER_BUCKET_TICK = 2;
 const STREAM_SUCK_INTERVAL_MS = 4;
 const IDLE_SCAN_INTERVAL_MS = 24;
 const SLOT_UI_REFRESH_MS = 80;
+const DEADLOCK_BELT_ROUNDS = 2;
 const SAND_STEP_MS = 16;
 const SAND_STEPS_PER_FRAME = 4;
 const ACTIVE_CELL_BUDGET = 4200;
@@ -95,6 +96,9 @@ const elements = {
   beltSpeedButton: document.querySelector("#beltSpeedButton"),
   resetButton: document.querySelector("#resetButton"),
   completionOverlay: document.querySelector("#completionOverlay"),
+  outcomeStatus: document.querySelector("#outcomeStatus"),
+  outcomeTitle: document.querySelector("#outcomeTitle"),
+  outcomeBody: document.querySelector("#outcomeBody"),
   phasePill: document.querySelector("#phasePill"),
   remainingValue: document.querySelector("#remainingValue"),
   remainingByColor: document.querySelector("#remainingByColor"),
@@ -114,6 +118,8 @@ let logItems = [];
 let bucketButtons = new Map();
 let beltSpeedIndex = 0;
 let bucketPaletteSignature = "";
+let deadlockBeltTravel = 0;
+let deadlockLastBeltOffset = null;
 
 function createFilledPainting(size, color) {
   return Array.from({ length: size }, () => Array(size).fill(color));
@@ -499,6 +505,10 @@ class SandEngine {
 
   hasDirtyCells() {
     return this.dirtyCells.size > 0;
+  }
+
+  hasActiveSand() {
+    return this.activeCells.size > 0;
   }
 
   consumeDirtyCells() {
@@ -972,24 +982,23 @@ class GameState {
     return slotIndex;
   }
 
-  updatePhase(availableColors) {
+  updatePhase(hasAnyBucketAbsorbable = false) {
     if (this.field.isCleared()) {
       this.phase = "won";
       return;
     }
 
-    if (this.isDeadlocked(availableColors)) {
+    if (this.isDeadlocked(hasAnyBucketAbsorbable)) {
       this.phase = "lost";
     }
   }
 
-  isDeadlocked(availableColors) {
+  isDeadlocked(hasAnyBucketAbsorbable = false) {
     if (!this.conveyor.isFull()) {
       return false;
     }
 
-    const availableColorSet = new Set(availableColors);
-    return this.conveyor.bucketColors().every((color) => !availableColorSet.has(color));
+    return !hasAnyBucketAbsorbable;
   }
 }
 
@@ -1025,6 +1034,11 @@ function sortColors(colors) {
 
 function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function resetDeadlockWait() {
+  deadlockBeltTravel = 0;
+  deadlockLastBeltOffset = null;
 }
 
 function tweenTo(scene, target, config) {
@@ -1078,6 +1092,7 @@ function applyConvertedLevel(rows, paletteEntries) {
   bucketPaletteSignature = "";
   gameState = new GameState(currentLevelRows);
   isAbsorptionLoopRunning = false;
+  resetDeadlockWait();
   lastSlotUiRefreshAt = 0;
   logItems = [];
   renderLog();
@@ -1273,11 +1288,13 @@ class SandSorterScene extends Phaser.Scene {
   }
 
   update(_time, delta) {
-    this.beltOffset = Phaser.Math.Wrap(
-      this.beltOffset + (currentBeltSpeed() * delta) / 1000,
-      0,
-      this.beltLoopWidth
-    );
+    if (gameState.phase === "running") {
+      this.beltOffset = Phaser.Math.Wrap(
+        this.beltOffset + (currentBeltSpeed() * delta) / 1000,
+        0,
+        this.beltLoopWidth
+      );
+    }
     this.positionBeltSegments();
     this.positionBucketSlots();
     this.updateSandAutomata(delta);
@@ -1667,7 +1684,21 @@ function renderCompletionOverlay() {
     return;
   }
 
-  elements.completionOverlay.classList.toggle("is-hidden", gameState.phase !== "won");
+  const isWon = gameState.phase === "won";
+  const isLost = gameState.phase === "lost";
+  elements.completionOverlay.classList.toggle("is-hidden", !isWon && !isLost);
+  elements.completionOverlay.classList.toggle("is-won", isWon);
+  elements.completionOverlay.classList.toggle("is-lost", isLost);
+
+  if (isWon) {
+    elements.outcomeStatus.textContent = "完成";
+    elements.outcomeTitle.textContent = "通關成功";
+    elements.outcomeBody.textContent = "所有沙子都已吸收完畢。";
+  } else if (isLost) {
+    elements.outcomeStatus.textContent = "失敗";
+    elements.outcomeTitle.textContent = "遊戲失敗";
+    elements.outcomeBody.textContent = "輸送帶已滿，所有水桶都吸不到目前底層沙子。";
+  }
 }
 
 function renderBeltSpeedButton() {
@@ -1764,6 +1795,7 @@ async function handleBucketClick(color) {
 
   let slotIndex;
   try {
+    resetDeadlockWait();
     const preferredSlotIndex = sceneRef?.findLeftmostEmptySlot(gameState.conveyor.slots) ?? null;
     slotIndex = gameState.placeBucket(color, preferredSlotIndex);
   } catch (error) {
@@ -1792,7 +1824,7 @@ function startAbsorptionLoop() {
 }
 
 function updateEndState() {
-  gameState.updatePhase(availableColors());
+  gameState.updatePhase(sceneRef?.hasAnyBucketAbsorbable() ?? false);
 
   if (gameState.phase === "won") {
     setMessage("沙畫已清空。");
@@ -1816,6 +1848,45 @@ function removeBucketsWithoutRemainingSand() {
   removedBuckets.forEach((bucket) => addLog(`${colorLabel(bucket.color)}桶無對應沙子，自動移除。`, bucket.color));
   renderUI();
   return true;
+}
+
+function isStableDeadlockCandidate() {
+  return gameState.phase === "running"
+    && gameState.conveyor.isFull()
+    && !gameState.field.hasActiveSand()
+    && !(sceneRef?.hasAnyBucketAbsorbable() ?? false);
+}
+
+function updateDeadlockIdleState() {
+  if (!isStableDeadlockCandidate()) {
+    resetDeadlockWait();
+    return false;
+  }
+
+  const currentOffset = sceneRef?.beltOffset ?? 0;
+  const loopWidth = sceneRef?.beltLoopWidth ?? 0;
+  if (loopWidth <= 0) {
+    return false;
+  }
+
+  if (deadlockLastBeltOffset === null) {
+    deadlockLastBeltOffset = currentOffset;
+    return false;
+  }
+
+  const offsetDelta = currentOffset >= deadlockLastBeltOffset
+    ? currentOffset - deadlockLastBeltOffset
+    : currentOffset + loopWidth - deadlockLastBeltOffset;
+  deadlockBeltTravel += offsetDelta;
+  deadlockLastBeltOffset = currentOffset;
+
+  if (deadlockBeltTravel < loopWidth * DEADLOCK_BELT_ROUNDS) {
+    return false;
+  }
+
+  gameState.updatePhase(false);
+  renderUI();
+  return gameState.phase === "lost";
 }
 
 async function resolveAbsorption() {
@@ -1879,6 +1950,7 @@ async function resolveAbsorption() {
     }
 
     if (startedThisTick > 0) {
+      resetDeadlockWait();
       const now = window.performance.now();
       if (now - lastSlotUiRefreshAt >= SLOT_UI_REFRESH_MS) {
         sceneRef?.updateBucketSlots(gameState.conveyor.slots);
@@ -1887,6 +1959,9 @@ async function resolveAbsorption() {
       await sleep(STREAM_SUCK_INTERVAL_MS);
     } else {
       renderAvailableColors();
+      if (updateDeadlockIdleState()) {
+        break;
+      }
       await sleep(IDLE_SCAN_INTERVAL_MS);
     }
 
@@ -1914,6 +1989,7 @@ async function resolveAbsorption() {
 function resetGame() {
   gameState = new GameState(currentLevelRows);
   isAbsorptionLoopRunning = false;
+  resetDeadlockWait();
   lastSlotUiRefreshAt = 0;
   logItems = [];
   setMessage("選擇一個水桶開始。");

@@ -332,6 +332,10 @@ h2 {
   backdrop-filter: blur(2px);
 }
 
+.completion-overlay.is-lost {
+  background: rgba(55, 35, 35, 0.42);
+}
+
 .completion-panel {
   display: grid;
   gap: 6px;
@@ -344,10 +348,18 @@ h2 {
   box-shadow: var(--shadow);
 }
 
+.completion-overlay.is-lost .completion-panel {
+  border-color: color-mix(in srgb, var(--danger) 58%, #ffffff);
+}
+
 .completion-panel span {
   color: var(--accent);
   font-size: 13px;
   font-weight: 900;
+}
+
+.completion-overlay.is-lost .completion-panel span {
+  color: var(--danger);
 }
 
 .completion-panel strong {
