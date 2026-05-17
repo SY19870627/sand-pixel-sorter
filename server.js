@@ -9,6 +9,8 @@ const MANIFEST_PATH = path.join(LEVELS_DIR, "manifest.json");
 const PORT = Number.parseInt(process.env.PORT || "57512", 10);
 const HOST = "127.0.0.1";
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
+const SERVER_NAME = "sand-pixel-sorter-dev-server";
+const API_VERSION = 1;
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -210,6 +212,16 @@ async function handleLevelDelete(request, response) {
   }
 }
 
+function handleHealth(_request, response) {
+  sendJson(response, 200, {
+    service: SERVER_NAME,
+    apiVersion: API_VERSION,
+    rootDir: ROOT_DIR,
+    port: PORT,
+    capabilities: ["levelManifest", "uploadLevels", "deleteLevels"],
+  });
+}
+
 async function serveStatic(request, response) {
   const requestUrl = new URL(request.url, `http://${HOST}:${PORT}`);
   const pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
@@ -239,6 +251,11 @@ async function serveStatic(request, response) {
 }
 
 const server = http.createServer(async (request, response) => {
+  if (request.method === "GET" && request.url?.startsWith("/api/health")) {
+    handleHealth(request, response);
+    return;
+  }
+
   if (request.method === "POST" && request.url?.startsWith("/api/levels")) {
     await handleLevelUpload(request, response);
     return;
@@ -258,6 +275,19 @@ const server = http.createServer(async (request, response) => {
   response.end("Method Not Allowed");
 });
 
+server.on("error", (error) => {
+  if (error.code === "EADDRINUSE") {
+    console.error(`Port ${PORT} is already in use at http://${HOST}:${PORT}.`);
+    console.error(`Run: netstat -ano | findstr :${PORT}`);
+    console.error("Then stop the LISTENING PID, or start with another port:");
+    console.error("PowerShell: $env:PORT=57513; node server.js");
+    process.exit(1);
+  }
+
+  throw error;
+});
+
 server.listen(PORT, HOST, () => {
   console.log(`Sand Pixel Sorter running at http://${HOST}:${PORT}/index.html`);
+  console.log(`Health check: http://${HOST}:${PORT}/api/health`);
 });

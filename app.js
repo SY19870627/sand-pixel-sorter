@@ -5,6 +5,8 @@ const SOURCE_IMAGE_SIZE = 128;
 const DEFAULT_PALETTE_KEYS = ["sky", "brown", "skin", "dark", "white", "red"];
 const LEVEL_LIBRARY_MANIFEST_URL = "levels/manifest.json";
 const LEVEL_UPLOAD_API_URL = "api/levels";
+const API_HEALTH_URL = "api/health";
+const EXPECTED_API_SERVICE = "sand-pixel-sorter-dev-server";
 const FALLBACK_LEVEL_LIBRARY = [
   { id: "portrait", title: "Portrait", src: "levels/portrait.png", fallbackKind: "portrait" },
   { id: "island", title: "Island", src: "levels/island.png", fallbackKind: "island" },
@@ -134,6 +136,7 @@ let levelLibraryItems = [];
 let activeLevelId = null;
 let isLevelSwitching = false;
 let isLevelDeleting = false;
+let apiServerReady = window.location.protocol === "file:" ? false : null;
 
 function createFilledPainting(size, color) {
   return Array.from({ length: size }, () => Array(size).fill(color));
@@ -1202,6 +1205,10 @@ function normalizeLevelLibraryItem(entry, index, manifestUrl) {
   };
 }
 
+function shouldShowLevelDeleteControls() {
+  return window.location.protocol !== "file:" && apiServerReady === true;
+}
+
 function renderLevelGallery() {
   if (!elements.levelGallery) {
     return;
@@ -1242,7 +1249,7 @@ function renderLevelGallery() {
     });
 
     wrapper.append(button);
-    if (window.location.protocol !== "file:") {
+    if (shouldShowLevelDeleteControls()) {
       wrapper.append(deleteButton);
     }
     elements.levelGallery.append(wrapper);
@@ -1279,10 +1286,18 @@ async function handleLevelSelect(item) {
 }
 
 async function deleteSavedLevel(item) {
+  if (apiServerReady !== true) {
+    throw new Error("目前網址背後的服務不支援刪除 API，請重新用 node server.js 啟動遊戲。");
+  }
+
   const deleteUrl = new URL(`${LEVEL_UPLOAD_API_URL}/${encodeURIComponent(item.id)}`, window.location.href);
   const response = await fetch(deleteUrl.href, { method: "DELETE" });
   if (response.ok) {
     return response.json();
+  }
+
+  if (response.status === 405 || response.status === 404) {
+    throw new Error("目前網址背後的服務不支援刪除 API，請重新用 node server.js 啟動遊戲。");
   }
 
   let payload = null;
@@ -1421,6 +1436,36 @@ function loadFallbackLevelLibrary() {
   return levelLibraryItems;
 }
 
+async function detectApiServerHealth() {
+  if (window.location.protocol === "file:") {
+    apiServerReady = false;
+    renderLevelGallery();
+    return false;
+  }
+
+  try {
+    const healthUrl = new URL(API_HEALTH_URL, window.location.href);
+    const response = await fetch(`${healthUrl.href}?t=${Date.now()}`, {
+      cache: "no-store",
+    });
+    const payload = response.ok ? await response.json() : null;
+    apiServerReady =
+      payload?.service === EXPECTED_API_SERVICE
+      && Array.isArray(payload.capabilities)
+      && payload.capabilities.includes("deleteLevels");
+  } catch (_error) {
+    apiServerReady = false;
+  }
+
+  if (apiServerReady !== true) {
+    setUploadStatus("服務不完整");
+    setMessage("目前網址背後不是完整的 node server.js 服務，圖庫刪除與保存不會生效。");
+  }
+
+  renderLevelGallery();
+  return apiServerReady;
+}
+
 async function loadLevelLibrary() {
   if (!elements.levelGallery) {
     return;
@@ -1434,6 +1479,8 @@ async function loadLevelLibrary() {
     }
     return;
   }
+
+  await detectApiServerHealth();
 
   const manifestUrl = new URL(LEVEL_LIBRARY_MANIFEST_URL, window.location.href);
   try {
@@ -1450,6 +1497,9 @@ async function loadLevelLibrary() {
 
     if (levelLibraryItems.length > 0) {
       await handleLevelSelect(levelLibraryItems[0]);
+    }
+    if (apiServerReady !== true) {
+      setUploadStatus("服務不完整");
     }
   } catch (_error) {
     loadFallbackLevelLibrary();
