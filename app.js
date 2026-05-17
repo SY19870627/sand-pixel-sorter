@@ -2,6 +2,9 @@ const SAND_UNIT_VALUE = 1;
 const BUCKET_CAPACITY = 300;
 const SLOT_COUNT = 5;
 const SOURCE_IMAGE_SIZE = 128;
+const DEFAULT_PALETTE_KEYS = ["sky", "brown", "skin", "dark", "white", "red"];
+const LEVEL_LIBRARY_MANIFEST_URL = "levels/manifest.json";
+const LEVEL_UPLOAD_API_URL = "api/levels";
 const BELT_SPEED_MULTIPLIERS = [1, 2, 3];
 const GRAVITY_DIRECTIONS = ["down", "right", "up", "left"];
 const GRAVITY_VECTORS = {
@@ -15,6 +18,7 @@ const SUCK_TRAIL_MS = 60;
 const SUCK_TRAIL_COUNT = 4;
 const ABSORB_ROUND_DELAY_MS = 2;
 const BUCKET_REMOVE_DELAY_MS = 18;
+const BUCKET_FULL_FEEDBACK_MS = 360;
 const BELT_SPEED_PX_PER_SECOND = 54;
 const BUCKET_SUCTION_HALF_WIDTH = 34;
 const MAX_SUCKS_PER_BUCKET_TICK = 2;
@@ -86,7 +90,7 @@ function setGamePalette(paletteEntries) {
   rebuildPaletteLookups();
 }
 
-setGamePalette(["sky", "brown", "skin", "dark", "white", "red"].map((key) => ({ key, ...DEFAULT_COLOR_DATA[key] })));
+setGamePalette(defaultPaletteEntries());
 
 const elements = {
   imageUploadInput: document.querySelector("#imageUploadInput"),
@@ -99,6 +103,7 @@ const elements = {
   outcomeStatus: document.querySelector("#outcomeStatus"),
   outcomeTitle: document.querySelector("#outcomeTitle"),
   outcomeBody: document.querySelector("#outcomeBody"),
+  levelGallery: document.querySelector("#levelGallery"),
   phasePill: document.querySelector("#phasePill"),
   remainingValue: document.querySelector("#remainingValue"),
   remainingByColor: document.querySelector("#remainingByColor"),
@@ -120,6 +125,10 @@ let beltSpeedIndex = 0;
 let bucketPaletteSignature = "";
 let deadlockBeltTravel = 0;
 let deadlockLastBeltOffset = null;
+let levelLibraryItems = [];
+let activeLevelId = null;
+let isLevelSwitching = false;
+let isLevelDeleting = false;
 
 function createFilledPainting(size, color) {
   return Array.from({ length: size }, () => Array(size).fill(color));
@@ -191,6 +200,10 @@ function createSourcePainting() {
 }
 
 let currentLevelRows = createSourcePainting();
+
+function defaultPaletteEntries() {
+  return DEFAULT_PALETTE_KEYS.map((key) => ({ key, ...DEFAULT_COLOR_DATA[key] }));
+}
 
 function beltSpeedMultiplier() {
   return BELT_SPEED_MULTIPLIERS[beltSpeedIndex] ?? 1;
@@ -350,14 +363,25 @@ function buildRowsFromPixels(pixels, centers, paletteEntries) {
 
 async function decodeImageFile(file) {
   if (window.createImageBitmap) {
-    return createImageBitmap(file);
+    try {
+      return await createImageBitmap(file);
+    } catch (_error) {
+      // 某些瀏覽器無法直接用 createImageBitmap 解析 SVG，改走 Image 物件備援。
+    }
   }
 
   return new Promise((resolve, reject) => {
     const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("圖片讀取失敗。"));
-    image.src = URL.createObjectURL(file);
+    const objectUrl = URL.createObjectURL(file);
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("圖片讀取失敗。"));
+    };
+    image.src = objectUrl;
   });
 }
 
@@ -393,6 +417,16 @@ async function convertImageFileToLevel(file, paletteSize) {
   }));
   const rows = buildRowsFromPixels(pixels, centers, paletteEntries);
   return { rows, paletteEntries };
+}
+
+async function convertImageUrlToLevel(imageUrl, paletteSize) {
+  const response = await fetch(imageUrl, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error("圖庫圖片讀取失敗。");
+  }
+
+  const blob = await response.blob();
+  return convertImageFileToLevel(blob, paletteSize);
 }
 
 function colorId(color) {
@@ -1085,6 +1119,255 @@ function renderLog() {
   });
 }
 
+function normalizeLevelLibraryItem(entry, index, manifestUrl) {
+  if (!entry?.src) {
+    return null;
+  }
+
+  const id = entry.id || `level_${index + 1}`;
+  const title = entry.title || `Level ${index + 1}`;
+  const sourcePath = String(entry.src);
+  return {
+    id,
+    title,
+    sourcePath,
+    src: new URL(sourcePath, manifestUrl).href,
+    isUploaded: sourcePath.replaceAll("\\", "/").startsWith("uploads/"),
+  };
+}
+
+function renderLevelGallery() {
+  if (!elements.levelGallery) {
+    return;
+  }
+
+  elements.levelGallery.replaceChildren();
+  elements.levelGallery.classList.toggle("is-hidden", levelLibraryItems.length === 0);
+  levelLibraryItems.forEach((item) => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "level-thumb-item";
+    wrapper.classList.toggle("is-active", activeLevelId === item.id);
+
+    const button = document.createElement("button");
+    button.className = "level-thumb";
+    button.type = "button";
+    button.dataset.levelId = item.id;
+    button.disabled = isLevelSwitching || isLevelDeleting;
+    button.classList.toggle("is-active", activeLevelId === item.id);
+    button.setAttribute("aria-label", `切換到 ${item.title}`);
+
+    const image = document.createElement("img");
+    image.src = item.src;
+    image.alt = item.title;
+    image.loading = "lazy";
+
+    button.append(image);
+    button.addEventListener("click", () => handleLevelSelect(item));
+
+    const deleteButton = document.createElement("button");
+    deleteButton.className = "level-delete-button";
+    deleteButton.type = "button";
+    deleteButton.disabled = isLevelSwitching || isLevelDeleting;
+    deleteButton.textContent = "×";
+    deleteButton.setAttribute("aria-label", `刪除 ${item.title}`);
+    deleteButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void handleLevelDelete(item);
+    });
+
+    wrapper.append(button, deleteButton);
+    elements.levelGallery.append(wrapper);
+  });
+}
+
+async function handleLevelSelect(item) {
+  if (isLevelSwitching) {
+    return;
+  }
+
+  isLevelSwitching = true;
+  renderLevelGallery();
+  setUploadStatus("切換中...");
+
+  try {
+    const paletteSize = clampPaletteSize(elements.paletteSizeSelect?.value ?? 6);
+    const { rows, paletteEntries } = await convertImageUrlToLevel(item.src, paletteSize);
+    activeLevelId = item.id;
+    applyConvertedLevel(rows, paletteEntries);
+    renderLevelGallery();
+    setMessage(`已切換沙畫：${item.title}。`);
+    setUploadStatus(`${paletteEntries.length} 色完成`);
+  } catch (error) {
+    setUploadStatus("切換失敗");
+    setMessage(error.message || "圖庫圖片切換失敗。");
+  } finally {
+    isLevelSwitching = false;
+    renderLevelGallery();
+  }
+}
+
+async function deleteSavedLevel(item) {
+  const deleteUrl = new URL(`${LEVEL_UPLOAD_API_URL}/${encodeURIComponent(item.id)}`, window.location.href);
+  const response = await fetch(deleteUrl.href, { method: "DELETE" });
+  if (response.ok) {
+    return response.json();
+  }
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (_error) {
+    // 刪除 API 可能不存在，例如使用純靜態伺服器或 file:// 開啟時。
+  }
+
+  throw new Error(payload?.error || "圖片刪除失敗，請確認是用 node server.js 開啟遊戲。");
+}
+
+async function selectFallbackLevelAfterDelete(deletedIndex) {
+  const fallbackItem = levelLibraryItems[Math.min(deletedIndex, levelLibraryItems.length - 1)] ?? null;
+  if (fallbackItem !== null) {
+    activeLevelId = null;
+    await handleLevelSelect(fallbackItem);
+    return;
+  }
+
+  activeLevelId = null;
+  currentLevelRows = createSourcePainting();
+  applyConvertedLevel(currentLevelRows, defaultPaletteEntries());
+  renderLevelGallery();
+  setUploadStatus("圖庫已清空");
+}
+
+async function handleLevelDelete(item) {
+  if (isLevelSwitching || isLevelDeleting) {
+    return;
+  }
+
+  if (!window.confirm(`刪除圖片「${item.title}」？`)) {
+    return;
+  }
+
+  const deletedIndex = levelLibraryItems.findIndex((libraryItem) => libraryItem.id === item.id);
+  if (deletedIndex === -1) {
+    return;
+  }
+
+  isLevelDeleting = true;
+  renderLevelGallery();
+  setUploadStatus("刪除中...");
+
+  try {
+    await deleteSavedLevel(item);
+    const deletedActiveLevel = activeLevelId === item.id;
+    levelLibraryItems = levelLibraryItems.filter((libraryItem) => libraryItem.id !== item.id);
+    renderLevelGallery();
+    await refreshLevelLibraryFromManifest();
+    setMessage(`已刪除圖片：${item.title}。`);
+    setUploadStatus("已刪除");
+
+    if (deletedActiveLevel) {
+      await selectFallbackLevelAfterDelete(deletedIndex);
+    } else {
+      renderLevelGallery();
+    }
+  } catch (error) {
+    setUploadStatus("刪除失敗");
+    setMessage(error.message || "圖片刪除失敗。");
+  } finally {
+    isLevelDeleting = false;
+    renderLevelGallery();
+  }
+}
+
+function upsertLevelLibraryItem(item) {
+  const existingIndex = levelLibraryItems.findIndex((libraryItem) => libraryItem.id === item.id);
+  if (existingIndex === -1) {
+    levelLibraryItems.push(item);
+  } else {
+    levelLibraryItems[existingIndex] = item;
+  }
+}
+
+async function saveUploadedLevel(file) {
+  const uploadUrl = new URL(LEVEL_UPLOAD_API_URL, window.location.href);
+  const response = await fetch(uploadUrl.href, {
+    method: "POST",
+    headers: {
+      "content-type": file.type || "application/octet-stream",
+      "x-file-name": encodeURIComponent(file.name || "upload.png"),
+    },
+    body: file,
+  });
+
+  if (!response.ok) {
+    throw new Error("圖片未保存。");
+  }
+
+  const item = await response.json();
+  const manifestUrl = new URL(LEVEL_LIBRARY_MANIFEST_URL, window.location.href);
+  const normalizedItem = normalizeLevelLibraryItem(item, levelLibraryItems.length, manifestUrl);
+  if (normalizedItem === null) {
+    throw new Error("圖片保存回傳資料無效。");
+  }
+
+  upsertLevelLibraryItem(normalizedItem);
+  activeLevelId = normalizedItem.id;
+  renderLevelGallery();
+  return normalizedItem;
+}
+
+async function refreshLevelLibraryFromManifest() {
+  const manifestUrl = new URL(LEVEL_LIBRARY_MANIFEST_URL, window.location.href);
+  const response = await fetch(`${manifestUrl.href}?t=${Date.now()}`, {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error("圖庫清單讀取失敗。");
+  }
+
+  const manifest = await response.json();
+  levelLibraryItems = (manifest.levels ?? [])
+    .map((entry, index) => normalizeLevelLibraryItem(entry, index, manifestUrl))
+    .filter((libraryItem) => libraryItem !== null);
+
+  if (activeLevelId !== null && !levelLibraryItems.some((libraryItem) => libraryItem.id === activeLevelId)) {
+    activeLevelId = null;
+  }
+
+  renderLevelGallery();
+  return levelLibraryItems;
+}
+
+async function loadLevelLibrary() {
+  if (!elements.levelGallery) {
+    return;
+  }
+
+  const manifestUrl = new URL(LEVEL_LIBRARY_MANIFEST_URL, window.location.href);
+  try {
+    const response = await fetch(manifestUrl.href, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error("圖庫清單讀取失敗。");
+    }
+
+    const manifest = await response.json();
+    levelLibraryItems = (manifest.levels ?? [])
+      .map((entry, index) => normalizeLevelLibraryItem(entry, index, manifestUrl))
+      .filter((item) => item !== null);
+    renderLevelGallery();
+
+    if (levelLibraryItems.length > 0) {
+      await handleLevelSelect(levelLibraryItems[0]);
+    }
+  } catch (_error) {
+    levelLibraryItems = [];
+    activeLevelId = null;
+    renderLevelGallery();
+    setUploadStatus("圖庫未載入");
+  }
+}
+
 function applyConvertedLevel(rows, paletteEntries) {
   setGamePalette(paletteEntries);
   currentLevelRows = rows;
@@ -1112,9 +1395,19 @@ async function handleImageUpload(event) {
 
   try {
     const { rows, paletteEntries } = await convertImageFileToLevel(file, paletteSize);
+    activeLevelId = null;
     applyConvertedLevel(rows, paletteEntries);
     setMessage(`圖片已轉成 ${SOURCE_IMAGE_SIZE}x${SOURCE_IMAGE_SIZE}、${paletteEntries.length} 色沙畫。`);
     setUploadStatus(`${paletteEntries.length} 色完成`);
+
+    try {
+      const savedItem = await saveUploadedLevel(file);
+      setMessage(`圖片已保存並切換沙畫：${savedItem.title}。`);
+      setUploadStatus(`${paletteEntries.length} 色完成，已保存`);
+    } catch (_saveError) {
+      renderLevelGallery();
+      setUploadStatus(`${paletteEntries.length} 色完成，未保存`);
+    }
   } catch (error) {
     setUploadStatus("轉換失敗");
     setMessage(error.message || "圖片轉換失敗。");
@@ -1361,6 +1654,103 @@ class SandSorterScene extends Phaser.Scene {
     });
 
     this.bringBeltMasksToTop();
+  }
+
+  async playFullBucketFeedback(bucketEntries) {
+    if (bucketEntries.length === 0) {
+      return;
+    }
+
+    await Promise.allSettled(
+      bucketEntries.map(({ bucket, slotIndex }) => this.playSingleBucketFullFeedback(slotIndex, bucket.color))
+    );
+  }
+
+  async playSingleBucketFullFeedback(slotIndex, color) {
+    const slotContainer = this.slotObjects.find((container) => container.getData("slotIndex") === slotIndex);
+    if (!slotContainer) {
+      return;
+    }
+
+    const accentColor = colorValue(color);
+    const highlightColor = mixColorValue(accentColor, 0xffffff, 0.72);
+    const originalDepth = slotContainer.depth;
+    const effectObjects = [];
+    slotContainer.setDepth(900);
+
+    // 滿桶瞬間用一個短促的放大、光圈與亮點爆開，讓玩家清楚感受到「收集完成」。
+    const glow = this.add.circle(0, -9, 31, highlightColor, 0.22);
+    const ring = this.add.circle(0, -9, 30);
+    const flash = this.add.rectangle(0, -9, 58, 48, 0xffffff, 0.18);
+    ring.setStrokeStyle(4, highlightColor, 0.92);
+    ring.setScale(0.72);
+    flash.setScale(0.7);
+    flash.setAngle(-8);
+    slotContainer.add([glow, ring, flash]);
+    effectObjects.push(glow, ring, flash);
+
+    const sparkles = Array.from({ length: 8 }, (_, index) => {
+      const angle = (Math.PI * 2 * index) / 8 - Math.PI / 2;
+      const sparkle = this.add.circle(0, -11, 3, highlightColor, 0.98);
+      sparkle.setScale(0.72);
+      sparkle.setData("targetX", Math.cos(angle) * 36);
+      sparkle.setData("targetY", -11 + Math.sin(angle) * 25);
+      slotContainer.add(sparkle);
+      effectObjects.push(sparkle);
+      return sparkle;
+    });
+
+    const cleanup = () => {
+      effectObjects.forEach((object) => {
+        if (object?.active) {
+          object.destroy();
+        }
+      });
+      if (slotContainer.active) {
+        slotContainer.setScale(1);
+        slotContainer.setDepth(originalDepth);
+      }
+    };
+
+    await Promise.allSettled([
+      tweenTo(this, slotContainer, {
+        scaleX: 1.16,
+        scaleY: 1.16,
+        yoyo: true,
+        duration: 120,
+        ease: "Back.easeOut",
+      }),
+      tweenTo(this, glow, {
+        scale: 1.35,
+        alpha: 0,
+        duration: BUCKET_FULL_FEEDBACK_MS,
+        ease: "Cubic.easeOut",
+      }),
+      tweenTo(this, ring, {
+        scale: 1.72,
+        alpha: 0,
+        duration: BUCKET_FULL_FEEDBACK_MS,
+        ease: "Cubic.easeOut",
+      }),
+      tweenTo(this, flash, {
+        scaleX: 1.24,
+        scaleY: 1.08,
+        alpha: 0,
+        duration: 180,
+        ease: "Quad.easeOut",
+      }),
+      ...sparkles.map((sparkle, index) => tweenTo(this, sparkle, {
+        x: sparkle.getData("targetX"),
+        y: sparkle.getData("targetY"),
+        alpha: 0,
+        scale: 0.24,
+        delay: index * 10,
+        duration: BUCKET_FULL_FEEDBACK_MS - 60,
+        ease: "Quad.easeOut",
+      })),
+    ]);
+
+    cleanup();
   }
 
   createBucketVisual(color) {
@@ -1837,6 +2227,21 @@ function updateEndState() {
   }
 }
 
+async function playFullBucketFeedbackBeforeRemoval() {
+  const fullBucketEntries = gameState.conveyor.slots
+    .map((bucket, slotIndex) => (bucket?.isFull() ? { bucket, slotIndex } : null))
+    .filter((entry) => entry !== null);
+
+  if (fullBucketEntries.length === 0) {
+    return;
+  }
+
+  // 先把槽位強制刷新到 100%，再播放滿桶動畫，最後才交給原本的移除流程。
+  sceneRef?.updateBucketSlots(gameState.conveyor.slots);
+  lastSlotUiRefreshAt = window.performance.now();
+  await sceneRef?.playFullBucketFeedback(fullBucketEntries);
+}
+
 function removeBucketsWithoutRemainingSand() {
   const removedBuckets = gameState.conveyor.removeBucketsWithoutRemainingSand(gameState.field);
   if (removedBuckets.length === 0) {
@@ -1965,6 +2370,7 @@ async function resolveAbsorption() {
       await sleep(IDLE_SCAN_INTERVAL_MS);
     }
 
+    await playFullBucketFeedbackBeforeRemoval();
     const removedBuckets = gameState.conveyor.removeFullBuckets();
     if (removedBuckets.length > 0) {
       const removedText = removedBuckets.map((bucket) => `${colorLabel(bucket.color)}桶`).join("、");
@@ -2032,3 +2438,4 @@ elements.gravityButton?.addEventListener("click", cycleGravityDirection);
 elements.beltSpeedButton?.addEventListener("click", cycleBeltSpeed);
 elements.resetButton.addEventListener("click", resetGame);
 bootPhaser();
+void loadLevelLibrary();

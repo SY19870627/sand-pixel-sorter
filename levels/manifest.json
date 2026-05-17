@@ -1,0 +1,39 @@
+{
+  "levels": [
+    {
+      "id": "portrait",
+      "title": "Portrait",
+      "src": "portrait.png"
+    },
+    {
+      "id": "island",
+      "title": "Island",
+      "src": "island.png"
+    },
+    {
+      "id": "gem",
+      "title": "Gem",
+      "src": "gem.png"
+    },
+    {
+      "id": "upload-1778975100065-a47f8d53",
+      "title": "ChatGPT-Image-2025-9-28-08_36_49",
+      "src": "uploads/ChatGPT-Image-2025-9-28-08_36_49-1778975100065.png"
+    },
+    {
+      "id": "upload-1778975324057-f142f945",
+      "title": "sticker",
+      "src": "uploads/sticker-1778975324057.png"
+    },
+    {
+      "id": "upload-1778975329920-44b286f5",
+      "title": "1772086460711",
+      "src": "uploads/1772086460711-1778975329920.png"
+    },
+    {
+      "id": "upload-1778976297137-59569cd5",
+      "title": "Gemini_Generated_Image_v4z5bbv4z5bbv4z5",
+      "src": "uploads/Gemini_Generated_Image_v4z5bbv4z5bbv4z5-1778976297137.png"
+    }
+  ]
+}

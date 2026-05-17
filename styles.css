@@ -157,6 +157,95 @@ button {
   line-height: 1.15;
 }
 
+.level-gallery {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-width: min(100%, 760px);
+  margin: 0 auto 12px;
+  padding: 8px;
+  overflow-x: auto;
+  border: 1px solid color-mix(in srgb, var(--line) 72%, #ffffff);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.level-thumb-item {
+  position: relative;
+  flex: 0 0 auto;
+  width: 58px;
+  height: 58px;
+}
+
+.level-thumb {
+  width: 100%;
+  height: 100%;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  padding: 3px;
+  background: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(58, 47, 38, 0.12);
+}
+
+.level-thumb:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 54%, #ffffff);
+  transform: translateY(-1px);
+}
+
+.level-thumb.is-active {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 2px rgba(38, 127, 120, 0.14),
+    0 6px 14px rgba(58, 47, 38, 0.16);
+}
+
+.level-thumb:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.level-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 5px;
+  object-fit: cover;
+  image-rendering: pixelated;
+}
+
+.level-delete-button {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  z-index: 2;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid rgba(115, 53, 44, 0.3);
+  border-radius: 999px;
+  background: #fffaf4;
+  color: #8a3a30;
+  cursor: pointer;
+  font-size: 17px;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 3px 8px rgba(58, 47, 38, 0.18);
+}
+
+.level-delete-button:hover:not(:disabled),
+.level-delete-button:focus-visible {
+  border-color: #8a3a30;
+  background: #fff0ea;
+  transform: scale(1.05);
+}
+
+.level-delete-button:disabled {
+  cursor: wait;
+  opacity: 0.48;
+}
+
 .eyebrow,
 .section-kicker {
   margin: 0 0 4px;

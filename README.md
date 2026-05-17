@@ -4,11 +4,21 @@
 
 ## 執行方式
 
-直接用瀏覽器開啟：
+建議用內建本機伺服器開啟，讓瀏覽器可以讀取 `levels/manifest.json` 圖庫清單，並把玩家上傳圖片保存到 `levels/uploads/`：
+
+```powershell
+node server.js
+```
+
+然後開啟：
 
 ```text
-D:\Git\Idle Sand Sorting\index.html
+http://127.0.0.1:57512/index.html
 ```
+
+圖片圖庫支援在縮圖右上角刪除圖片。使用 `node server.js` 啟動時，刪除會同步更新 `levels/manifest.json`；若圖片位於 `levels/uploads/`，也會一併刪除該上傳檔案。內建圖片只會從清單移除，不會刪除原始素材檔。
+
+如果只用一般靜態伺服器開啟，仍可上傳圖片遊玩，但瀏覽器不能直接寫入專案資料夾，因此不會永久保存上傳圖。
 
 目前 Web 版使用 `Phaser 3 + Bitmap Sand Engine` 負責 Canvas 場景、像素沙畫、吸入粒子與輸送帶顯示。核心規則仍保留在純 JavaScript 狀態模型中，方便之後接 AI 求解或關卡驗證。
 
@@ -16,7 +26,7 @@ D:\Git\Idle Sand Sorting\index.html
 
 - 每顆沙是 bitmap 裡的 `1` 個 pixel，不是獨立 JS 物件或 Phaser circle。
 - `colorGrid: Uint8Array` 保存沙子顏色，`0` 代表空格，`1..N` 代表顏色。
-- 預設來源圖是程式產生的 `128x128` bitmap；玩家也可以上傳圖片並轉成 `6 / 7 / 8` 色沙畫。
+- 預設來源圖會從 `levels/manifest.json` 圖庫載入；玩家也可以上傳圖片並轉成 `6 / 7 / 8` 色沙畫。
 - 畫面只顯示一張低解析度 CanvasTexture，並用 nearest-neighbor / `image-rendering: pixelated` 放大。
 - 水桶只吸「該桶目前 X 軸正上方」底部可接觸的同色 pixel。
 - 吸走一顆沙後，只把受影響區域加入 active queue，沙子依照下、左下、右下規則流動。
@@ -41,11 +51,34 @@ D:\Git\Idle Sand Sorting\index.html
 - 右側介面已極簡化，只保留水桶按鈕。
 - 上方工具列會顯示目前剩餘沙子總量，並依顏色拆開顯示各色剩餘量。
 - 上方工具列可上傳圖片，瀏覽器會在本機置中裁切成 `128x128`，並用 k-means 量化成 `6 / 7 / 8` 色。
+- 像素圖上方會顯示 `levels/` 圖庫縮圖，點小圖即可切換目前沙畫。
 - 本原型每吸 `1` 個 pixel 算 `1` 單位，水桶容量是 `300`。
 - 水桶滿 `300/300` 後會消失並釋放槽位。
 - 剩餘沙子歸零時會顯示通關畫面，水桶按鈕會改成「已完成」。
 - 若某個水桶顏色在沙畫中已經完全不存在，該水桶會自動離開輸送帶。
 - 若 5 個槽位全滿，且沒有任何水桶顏色符合目前底層可吸顏色，判定死鎖。
+
+## 圖庫新增方式
+
+圖庫檔案放在 `levels/`，網站會讀取 `levels/manifest.json` 產生縮圖。
+
+手動新增圖片時：
+
+- 把圖片放進 `levels/`，可使用 `png`、`jpg`、`webp`、`gif`。
+- 在 `levels/manifest.json` 的 `levels` 陣列新增一筆資料。
+- `src` 使用相對於 `levels/manifest.json` 的路徑。
+
+範例：
+
+```json
+{
+  "id": "new_level",
+  "title": "New Level",
+  "src": "new-level.png"
+}
+```
+
+玩家在網站上傳圖片時，若網站是用 `node server.js` 開啟，原始圖片會自動保存到 `levels/uploads/`，並追加到 `levels/manifest.json`。
 
 ## 下一階段架構計畫：SandEngine 抽離與可變重力
 
