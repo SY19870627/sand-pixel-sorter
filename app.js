@@ -5,6 +5,11 @@ const SOURCE_IMAGE_SIZE = 128;
 const DEFAULT_PALETTE_KEYS = ["sky", "brown", "skin", "dark", "white", "red"];
 const LEVEL_LIBRARY_MANIFEST_URL = "levels/manifest.json";
 const LEVEL_UPLOAD_API_URL = "api/levels";
+const FALLBACK_LEVEL_LIBRARY = [
+  { id: "portrait", title: "Portrait", src: "levels/portrait.png", fallbackKind: "portrait" },
+  { id: "island", title: "Island", src: "levels/island.png", fallbackKind: "island" },
+  { id: "gem", title: "Gem", src: "levels/gem.png", fallbackKind: "gem" },
+];
 const BELT_SPEED_MULTIPLIERS = [1, 2, 3];
 const GRAVITY_DIRECTIONS = ["down", "right", "up", "left"];
 const GRAVITY_VECTORS = {
@@ -199,10 +204,52 @@ function createSourcePainting() {
   return rows;
 }
 
+function createIslandPainting() {
+  const rows = createFilledPainting(SOURCE_IMAGE_SIZE, "sky");
+  drawEllipse(rows, 64, 82, 42, 19, "brown");
+  drawEllipse(rows, 64, 75, 32, 12, "skin");
+  drawRect(rows, 0, 100, 127, 127, "sky");
+  drawEllipse(rows, 30, 32, 12, 12, "white");
+  drawRect(rows, 58, 43, 65, 82, "brown");
+  drawEllipse(rows, 46, 43, 26, 9, "red");
+  drawEllipse(rows, 74, 38, 31, 10, "red");
+  drawEllipse(rows, 86, 53, 27, 8, "red");
+  drawRect(rows, 48, 92, 80, 96, "white");
+  drawRect(rows, 40, 96, 88, 100, "white");
+  return rows;
+}
+
+function createGemPainting() {
+  const rows = createFilledPainting(SOURCE_IMAGE_SIZE, "dark");
+  drawEllipse(rows, 64, 96, 45, 12, "brown");
+  drawRect(rows, 44, 28, 84, 40, "white");
+  drawRect(rows, 34, 40, 94, 56, "sky");
+  drawRect(rows, 42, 56, 86, 88, "sky");
+  drawRect(rows, 54, 88, 74, 108, "sky");
+  drawRect(rows, 50, 44, 60, 82, "white");
+  drawRect(rows, 68, 42, 82, 70, "skin");
+  drawRect(rows, 38, 58, 48, 78, "red");
+  drawRect(rows, 84, 58, 92, 78, "red");
+  return rows;
+}
+
 let currentLevelRows = createSourcePainting();
 
 function defaultPaletteEntries() {
   return DEFAULT_PALETTE_KEYS.map((key) => ({ key, ...DEFAULT_COLOR_DATA[key] }));
+}
+
+function createFallbackLevelData(kind) {
+  const rowsByKind = {
+    portrait: createSourcePainting,
+    island: createIslandPainting,
+    gem: createGemPainting,
+  };
+  const createRows = rowsByKind[kind] ?? createSourcePainting;
+  return {
+    rows: createRows(),
+    paletteEntries: defaultPaletteEntries(),
+  };
 }
 
 function beltSpeedMultiplier() {
@@ -385,6 +432,15 @@ async function decodeImageFile(file) {
   });
 }
 
+function decodeImageUrl(imageUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("圖片讀取失敗。"));
+    image.src = imageUrl;
+  });
+}
+
 function drawImageToSourceCanvas(image) {
   const canvas = document.createElement("canvas");
   canvas.width = SOURCE_IMAGE_SIZE;
@@ -403,8 +459,7 @@ function drawImageToSourceCanvas(image) {
   return context.getImageData(0, 0, SOURCE_IMAGE_SIZE, SOURCE_IMAGE_SIZE);
 }
 
-async function convertImageFileToLevel(file, paletteSize) {
-  const image = await decodeImageFile(file);
+function convertDecodedImageToLevel(image, paletteSize) {
   const imageData = drawImageToSourceCanvas(image);
   image.close?.();
 
@@ -419,6 +474,11 @@ async function convertImageFileToLevel(file, paletteSize) {
   return { rows, paletteEntries };
 }
 
+async function convertImageFileToLevel(file, paletteSize) {
+  const image = await decodeImageFile(file);
+  return convertDecodedImageToLevel(image, paletteSize);
+}
+
 async function convertImageUrlToLevel(imageUrl, paletteSize) {
   const response = await fetch(imageUrl, { cache: "no-store" });
   if (!response.ok) {
@@ -427,6 +487,11 @@ async function convertImageUrlToLevel(imageUrl, paletteSize) {
 
   const blob = await response.blob();
   return convertImageFileToLevel(blob, paletteSize);
+}
+
+async function convertLevelImageUrlToLevel(imageUrl, paletteSize) {
+  const image = await decodeImageUrl(imageUrl);
+  return convertDecodedImageToLevel(image, paletteSize);
 }
 
 function colorId(color) {
@@ -1133,6 +1198,7 @@ function normalizeLevelLibraryItem(entry, index, manifestUrl) {
     sourcePath,
     src: new URL(sourcePath, manifestUrl).href,
     isUploaded: sourcePath.replaceAll("\\", "/").startsWith("uploads/"),
+    fallbackKind: entry.fallbackKind ?? null,
   };
 }
 
@@ -1175,7 +1241,10 @@ function renderLevelGallery() {
       void handleLevelDelete(item);
     });
 
-    wrapper.append(button, deleteButton);
+    wrapper.append(button);
+    if (window.location.protocol !== "file:") {
+      wrapper.append(deleteButton);
+    }
     elements.levelGallery.append(wrapper);
   });
 }
@@ -1191,7 +1260,10 @@ async function handleLevelSelect(item) {
 
   try {
     const paletteSize = clampPaletteSize(elements.paletteSizeSelect?.value ?? 6);
-    const { rows, paletteEntries } = await convertImageUrlToLevel(item.src, paletteSize);
+    const { rows, paletteEntries } =
+      window.location.protocol === "file:" && item.fallbackKind
+        ? createFallbackLevelData(item.fallbackKind)
+        : await convertLevelImageUrlToLevel(item.src, paletteSize);
     activeLevelId = item.id;
     applyConvertedLevel(rows, paletteEntries);
     renderLevelGallery();
@@ -1339,8 +1411,27 @@ async function refreshLevelLibraryFromManifest() {
   return levelLibraryItems;
 }
 
+function loadFallbackLevelLibrary() {
+  const pageUrl = new URL(window.location.href);
+  levelLibraryItems = FALLBACK_LEVEL_LIBRARY
+    .map((entry, index) => normalizeLevelLibraryItem(entry, index, pageUrl))
+    .filter((item) => item !== null);
+  activeLevelId = null;
+  renderLevelGallery();
+  return levelLibraryItems;
+}
+
 async function loadLevelLibrary() {
   if (!elements.levelGallery) {
+    return;
+  }
+
+  if (window.location.protocol === "file:") {
+    loadFallbackLevelLibrary();
+    if (levelLibraryItems.length > 0) {
+      await handleLevelSelect(levelLibraryItems[0]);
+      setUploadStatus("本機圖庫");
+    }
     return;
   }
 
@@ -1361,6 +1452,12 @@ async function loadLevelLibrary() {
       await handleLevelSelect(levelLibraryItems[0]);
     }
   } catch (_error) {
+    loadFallbackLevelLibrary();
+    if (levelLibraryItems.length > 0) {
+      await handleLevelSelect(levelLibraryItems[0]);
+      setUploadStatus("本機圖庫");
+      return;
+    }
     levelLibraryItems = [];
     activeLevelId = null;
     renderLevelGallery();
