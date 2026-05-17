@@ -28,6 +28,7 @@ const BUCKET_REMOVE_DELAY_MS = 18;
 const BUCKET_FULL_FEEDBACK_MS = 360;
 const BELT_SPEED_PX_PER_SECOND = 54;
 const BUCKET_SUCTION_HALF_WIDTH = 34;
+const BUCKET_SUCTION_DEPTH_ROWS = 3;
 const MAX_SUCKS_PER_BUCKET_TICK = 2;
 const STREAM_SUCK_INTERVAL_MS = 4;
 const IDLE_SCAN_INTERVAL_MS = 24;
@@ -731,44 +732,59 @@ class SandEngine {
   }
 
   getOuterSandIndexOnLine(lineCoordinate) {
+    return this.getOuterSandIndicesOnLine(lineCoordinate, 1)[0] ?? null;
+  }
+
+  getOuterSandIndicesOnLine(lineCoordinate, maxDepthRows = 1) {
+    const indices = [];
     const line = clampInteger(lineCoordinate, 0, this.lineLimit());
     const gravity = this.gravityVector();
+    const targetCount = Math.max(1, maxDepthRows);
+
+    const collectIndex = (index) => {
+      if (this.getIndex(index) === EMPTY_COLOR_ID) {
+        return false;
+      }
+
+      indices.push(index);
+      return indices.length >= targetCount;
+    };
 
     if (this.sideAxis() === "x") {
       if (gravity.y > 0) {
         for (let y = this.height - 1; y >= 0; y -= 1) {
           const index = this.index(line, y);
-          if (this.getIndex(index) !== EMPTY_COLOR_ID) {
-            return index;
+          if (collectIndex(index)) {
+            return indices;
           }
         }
       } else {
         for (let y = 0; y < this.height; y += 1) {
           const index = this.index(line, y);
-          if (this.getIndex(index) !== EMPTY_COLOR_ID) {
-            return index;
+          if (collectIndex(index)) {
+            return indices;
           }
         }
       }
-      return null;
+      return indices;
     }
 
     if (gravity.x > 0) {
       for (let x = this.width - 1; x >= 0; x -= 1) {
         const index = this.index(x, line);
-        if (this.getIndex(index) !== EMPTY_COLOR_ID) {
-          return index;
+        if (collectIndex(index)) {
+          return indices;
         }
       }
     } else {
       for (let x = 0; x < this.width; x += 1) {
         const index = this.index(x, line);
-        if (this.getIndex(index) !== EMPTY_COLOR_ID) {
-          return index;
+        if (collectIndex(index)) {
+          return indices;
         }
       }
     }
-    return null;
+    return indices;
   }
 
   availableColorsInLineRange(minLine, maxLine) {
@@ -777,15 +793,12 @@ class SandEngine {
     const max = clampInteger(Math.max(minLine, maxLine), 0, this.lineLimit());
 
     for (let line = min; line <= max; line += 1) {
-      const index = this.getOuterSandIndexOnLine(line);
-      if (index === null) {
-        continue;
-      }
-
-      const color = colorFromId(this.getIndex(index));
-      if (color !== null) {
-        colors.add(color);
-      }
+      this.getOuterSandIndicesOnLine(line, BUCKET_SUCTION_DEPTH_ROWS).forEach((index) => {
+        const color = colorFromId(this.getIndex(index));
+        if (color !== null) {
+          colors.add(color);
+        }
+      });
     }
 
     return colors;
@@ -800,26 +813,27 @@ class SandEngine {
     let bestDistance = Infinity;
 
     for (let line = min; line <= max; line += 1) {
-      const index = this.getOuterSandIndexOnLine(line);
-      if (index === null || reservedCellIndices.has(index) || this.getIndex(index) !== targetColorId) {
-        continue;
-      }
+      this.getOuterSandIndicesOnLine(line, BUCKET_SUCTION_DEPTH_ROWS).forEach((index) => {
+        if (reservedCellIndices.has(index) || this.getIndex(index) !== targetColorId) {
+          return;
+        }
 
-      const cellX = this.cellX(index);
-      const cellY = this.cellY(index);
-      const depth = this.gravityDepth(index);
-      const distance = Math.abs(line - centerLine);
-      if (depth > bestDepth || (depth === bestDepth && distance < bestDistance)) {
-        bestCell = {
-          index,
-          id: index,
-          cellX,
-          cellY,
-          colorId: targetColorId,
-        };
-        bestDepth = depth;
-        bestDistance = distance;
-      }
+        const cellX = this.cellX(index);
+        const cellY = this.cellY(index);
+        const depth = this.gravityDepth(index);
+        const distance = Math.abs(line - centerLine);
+        if (depth > bestDepth || (depth === bestDepth && distance < bestDistance)) {
+          bestCell = {
+            index,
+            id: index,
+            cellX,
+            cellY,
+            colorId: targetColorId,
+          };
+          bestDepth = depth;
+          bestDistance = distance;
+        }
+      });
     }
 
     return bestCell;
