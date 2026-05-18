@@ -33,7 +33,7 @@ const POWER_BUCKET_SUCTION_DEPTH_ROWS = 9;
 const POWER_BUCKET_CAPACITY = 900;
 const MAX_SUCKS_PER_BUCKET_TICK = 2;
 const RAINBOW_BUCKET_COLOR_KEY = "rainbow";
-const RAINBOW_BUCKET_CAPACITY = BUCKET_CAPACITY;
+const RAINBOW_BUCKET_CAPACITY = POWER_BUCKET_CAPACITY;
 const BOMB_RADIUS_CELLS = 10;
 const SANDQUAKE_STEP_COUNT = 6;
 const STREAM_SUCK_INTERVAL_MS = 4;
@@ -68,7 +68,7 @@ const POWER_TOOL_DEFINITIONS = [
     id: "rainbowBucket",
     name: "彩虹桶",
     shortLabel: "彩虹",
-    valueLabel: "萬用",
+    valueLabel: "萬用900",
     initialUses: 2,
   },
   {
@@ -2062,11 +2062,15 @@ class SandSorterScene extends Phaser.Scene {
 
   createBucketVisual(color, options = {}) {
     // 與右側 CSS 水桶使用同樣的輪廓：寬口、略收底的桶身，避免兩邊造型不一致。
+    const isRainbow = color === RAINBOW_BUCKET_COLOR_KEY;
+    if (isRainbow) {
+      return this.createRainbowBucketVisual();
+    }
+
     const fillColor = colorValue(color);
     const rimColor = mixColorValue(fillColor, 0xffffff, 0.46);
     const shadowColor = mixColorValue(fillColor, 0x000000, 0.22);
     const container = this.add.container(0, -9);
-    const isRainbow = color === RAINBOW_BUCKET_COLOR_KEY;
     const isPowerSuction = options.isPowerSuction === true;
 
     const powerGlow = isPowerSuction ? this.add.graphics() : null;
@@ -2078,7 +2082,7 @@ class SandSorterScene extends Phaser.Scene {
     }
 
     const body = this.add.graphics();
-    body.fillStyle(fillColor, isRainbow ? 0.98 : 1);
+    body.fillStyle(fillColor, 1);
     body.lineStyle(2, 0xffffff, 0.42);
     body.beginPath();
     body.moveTo(-22, -6);
@@ -2088,15 +2092,6 @@ class SandSorterScene extends Phaser.Scene {
     body.closePath();
     body.fillPath();
     body.strokePath();
-
-    const rainbowStripes = [];
-    if (isRainbow) {
-      [0xdf5148, 0xd9a928, 0x37a66b, 0x3f79c8, 0x8958bf].forEach((stripeColor, index) => {
-        const stripe = this.add.rectangle(-16 + index * 8, 7, 8, 25, stripeColor, 0.92);
-        stripe.setAngle(-4);
-        rainbowStripes.push(stripe);
-      });
-    }
 
     const rim = this.add.graphics();
     rim.fillStyle(rimColor, 1);
@@ -2139,7 +2134,91 @@ class SandSorterScene extends Phaser.Scene {
       });
     }
 
-    container.add([powerGlow, body, ...rainbowStripes, rim, shine, bottomShadow, ...powerMarks].filter(Boolean));
+    container.add([powerGlow, body, rim, shine, bottomShadow, ...powerMarks].filter(Boolean));
+    return container;
+  }
+
+  createRainbowBucketVisual() {
+    const container = this.add.container(0, -8);
+    const aura = this.add.circle(0, 3, 30, 0xffffff, 0.16);
+    const outerRing = this.add.circle(0, 3, 27, 0xffffff, 0);
+    const innerRing = this.add.circle(0, 3, 18, 0xffffff, 0);
+    outerRing.setStrokeStyle(4, 0xfff1a8, 0.72);
+    innerRing.setStrokeStyle(3, 0x70f5ff, 0.82);
+
+    const core = this.add.graphics();
+    core.lineStyle(2, 0xffffff, 0.86);
+    core.fillStyle(0xdf5148, 1);
+    core.fillTriangle(0, -25, -21, -2, 0, -2);
+    core.fillStyle(0xd9a928, 1);
+    core.fillTriangle(0, -25, 21, -2, 0, -2);
+    core.fillStyle(0x37a66b, 1);
+    core.fillTriangle(-21, -2, 0, -2, 0, 25);
+    core.fillStyle(0x3f79c8, 1);
+    core.fillTriangle(21, -2, 0, -2, 0, 25);
+    core.fillStyle(0x8958bf, 0.92);
+    core.fillCircle(0, 1, 10);
+    core.beginPath();
+    core.moveTo(0, -25);
+    core.lineTo(21, -2);
+    core.lineTo(0, 25);
+    core.lineTo(-21, -2);
+    core.closePath();
+    core.strokePath();
+
+    const shine = this.add.graphics();
+    shine.fillStyle(0xffffff, 0.5);
+    shine.fillTriangle(-6, -16, 3, -21, 0, -8);
+    shine.fillStyle(0xffffff, 0.28);
+    shine.fillCircle(8, 8, 4);
+
+    const sparkles = [
+      this.add.star(-27, -15, 4, 2, 5, 0xfff1a8, 0.9),
+      this.add.star(26, -8, 4, 2, 5, 0x70f5ff, 0.9),
+      this.add.star(-22, 20, 4, 2, 5, 0xff8bd1, 0.86),
+    ];
+
+    container.add([aura, outerRing, innerRing, core, shine, ...sparkles]);
+    this.tweens.add({
+      targets: aura,
+      alpha: 0.4,
+      scale: 1.32,
+      yoyo: true,
+      repeat: -1,
+      duration: 420,
+      ease: "Sine.easeInOut",
+    });
+    this.tweens.add({
+      targets: outerRing,
+      angle: 360,
+      alpha: 0.28,
+      repeat: -1,
+      duration: 1500,
+      ease: "Linear",
+    });
+    this.tweens.add({
+      targets: innerRing,
+      scale: 1.18,
+      alpha: 0.3,
+      yoyo: true,
+      repeat: -1,
+      duration: 280,
+      ease: "Sine.easeInOut",
+    });
+    sparkles.forEach((sparkle, index) => {
+      this.tweens.add({
+        targets: sparkle,
+        alpha: 0.18,
+        scale: 1.55,
+        angle: 90,
+        yoyo: true,
+        repeat: -1,
+        delay: index * 130,
+        duration: 260,
+        ease: "Sine.easeInOut",
+      });
+    });
+
     return container;
   }
 
@@ -2810,7 +2889,7 @@ function placeRainbowBucket() {
     return false;
   }
 
-  setMessage(`彩虹桶進入槽 ${slotIndex + 1}，可以吸任何顏色。`);
+  setMessage(`彩虹核心進入槽 ${slotIndex + 1}，容量 900，可以吸任何顏色。`);
   addLog("放入彩虹桶。", RAINBOW_BUCKET_COLOR_KEY);
   renderUI();
   startAbsorptionLoop();

@@ -792,9 +792,28 @@ h2 {
 
 .power-tool-rainbowBucket {
   --tool-accent: #8958bf;
+  padding-right: 58px;
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.68)),
     linear-gradient(120deg, #df5148, #d9a928, #37a66b, #3f79c8, #8958bf);
+}
+
+.power-tool-rainbowBucket::after {
+  content: "";
+  position: absolute;
+  right: 13px;
+  bottom: 12px;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.95) 0 9%, transparent 10%),
+    conic-gradient(from 20deg, #df5148, #d9a928, #37a66b, #3f79c8, #8958bf, #df5148);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.76),
+    0 0 18px rgba(137, 88, 191, 0.55);
+  clip-path: polygon(50% 0, 100% 42%, 76% 100%, 24% 100%, 0 42%);
+  animation: rainbowCoreFlicker 720ms ease-in-out infinite alternate;
 }
 
 .power-tool-sandquake {
@@ -912,6 +931,20 @@ h2 {
   }
   100% {
     transform: translateY(0);
+  }
+}
+
+@keyframes rainbowCoreFlicker {
+  0% {
+    filter: brightness(0.9) saturate(1.05);
+    transform: scale(0.94) rotate(-4deg);
+  }
+  45% {
+    filter: brightness(1.35) saturate(1.5);
+  }
+  100% {
+    filter: brightness(1.8) saturate(1.9);
+    transform: scale(1.08) rotate(5deg);
   }
 }
 
