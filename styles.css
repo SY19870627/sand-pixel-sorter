@@ -29,6 +29,34 @@ body {
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
+  transition:
+    background 240ms ease,
+    color 240ms ease;
+}
+
+body.is-fireworks-active {
+  color: #f8fbff;
+  background:
+    radial-gradient(circle at 50% 16%, rgba(77, 95, 150, 0.34), transparent 34%),
+    linear-gradient(180deg, #02030a 0%, #050713 48%, #000000 100%);
+}
+
+body.is-fireworks-active .playfield,
+body.is-fireworks-active .side-panel {
+  border-color: rgba(132, 159, 255, 0.36);
+  background: rgba(7, 10, 24, 0.88);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.05),
+    0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+body.is-fireworks-active .remaining-chip,
+body.is-fireworks-active .upload-button,
+body.is-fireworks-active .palette-select,
+body.is-fireworks-active .reset-button {
+  border-color: rgba(132, 159, 255, 0.32);
+  color: #f8fbff;
+  background: rgba(10, 14, 31, 0.86);
 }
 
 button {

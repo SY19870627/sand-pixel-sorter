@@ -34,7 +34,10 @@ const POWER_BUCKET_CAPACITY = 900;
 const MAX_SUCKS_PER_BUCKET_TICK = 2;
 const RAINBOW_BUCKET_COLOR_KEY = "rainbow";
 const RAINBOW_BUCKET_CAPACITY = POWER_BUCKET_CAPACITY;
-const BOMB_RADIUS_CELLS = 10;
+const FIREWORK_BOMB_COUNT = 10;
+const FIREWORK_ERASE_RADIUS_CELLS = 9;
+const FIREWORK_LAUNCH_DELAY_MS = 220;
+const FIREWORK_END_DELAY_MS = 1200;
 const SANDQUAKE_STEP_COUNT = 6;
 const STREAM_SUCK_INTERVAL_MS = 4;
 const IDLE_SCAN_INTERVAL_MS = 24;
@@ -59,9 +62,9 @@ const POWER_TOOL_DEFINITIONS = [
   },
   {
     id: "bomb",
-    name: "炸彈",
-    shortLabel: "炸彈",
-    valueLabel: "範圍",
+    name: "煙火炸彈",
+    shortLabel: "煙火",
+    valueLabel: "連發",
     initialUses: 2,
   },
   {
@@ -178,6 +181,7 @@ let levelLibraryItems = [];
 let activeLevelId = null;
 let isLevelSwitching = false;
 let isLevelDeleting = false;
+let isFireworkShowRunning = false;
 let apiServerReady = window.location.protocol === "file:" ? false : null;
 
 function createFilledPainting(size, color) {
@@ -1681,6 +1685,8 @@ function applyConvertedLevel(rows, paletteEntries) {
   powerToolSignature = "";
   gameState = new GameState(currentLevelRows);
   isAbsorptionLoopRunning = false;
+  isFireworkShowRunning = false;
+  document.body.classList.remove("is-fireworks-active");
   resetDeadlockWait();
   lastSlotUiRefreshAt = 0;
   logItems = [];
@@ -1768,7 +1774,6 @@ class SandSorterScene extends Phaser.Scene {
     this.drawFrame();
     this.createSandBitmapLayer();
     this.createBeltMasks();
-    this.input.on("pointerdown", (pointer) => this.handleBoardPointerDown(pointer));
 
     sceneRef = this;
     this.syncFromState(gameState);
@@ -2288,76 +2293,180 @@ class SandSorterScene extends Phaser.Scene {
       && worldY <= this.boardY + this.boardSize;
   }
 
-  handleBoardPointerDown(pointer) {
-    if (gameState.phase !== "running" || gameState.powerTools.activeTargetTool !== "bomb") {
-      return;
+  async playFireworkBombShow() {
+    document.body.classList.add("is-fireworks-active");
+    this.cameras.main.setBackgroundColor("#03040d");
+    const nightOverlay = this.add.rectangle(
+      this.canvasWidth / 2,
+      this.canvasHeight / 2,
+      this.canvasWidth,
+      this.canvasHeight,
+      0x02030b,
+      0.44
+    );
+    nightOverlay.setDepth(720);
+
+    let removedTotal = 0;
+    try {
+      const launches = [];
+      for (let index = 0; index < FIREWORK_BOMB_COUNT; index += 1) {
+        const launch = this.launchFireworkBomb(index).then((removedCount) => {
+          removedTotal += removedCount;
+        });
+        launches.push(launch);
+        await sleep(FIREWORK_LAUNCH_DELAY_MS);
+      }
+
+      await Promise.allSettled(launches);
+      await sleep(FIREWORK_END_DELAY_MS);
+      return removedTotal;
+    } finally {
+      nightOverlay.destroy();
+      this.cameras.main.setBackgroundColor("#f5e7bf");
+      document.body.classList.remove("is-fireworks-active");
     }
-
-    if (!this.isInsideBoard(pointer.x, pointer.y)) {
-      return;
-    }
-
-    if (!consumePowerToolUse("bomb")) {
-      gameState.powerTools.activeTargetTool = null;
-      renderUI({ updateSlots: false });
-      return;
-    }
-
-    const cellX = this.worldXToCellX(pointer.x);
-    const cellY = this.worldYToCellY(pointer.y);
-    const removedCount = gameState.field.eraseCircle(cellX, cellY, BOMB_RADIUS_CELLS);
-    gameState.powerTools.activeTargetTool = null;
-    resetDeadlockWait();
-    this.renderDirtySand();
-    this.playBombEffect(pointer.x, pointer.y);
-
-    if (removedCount > 0) {
-      setMessage(`炸彈清掉 ${removedCount} 顆沙子。`);
-      addLog(`炸彈清除 ${removedCount} 顆沙子。`, "red");
-    } else {
-      setMessage("炸彈沒有命中沙子。");
-    }
-
-    updateEndState();
-    renderUI();
-    startAbsorptionLoop();
   }
 
-  playBombEffect(worldX, worldY) {
-    const ring = this.add.circle(worldX, worldY, BOMB_RADIUS_CELLS * this.pixelWorldSize, 0xffffff, 0);
-    ring.setStrokeStyle(4, 0xfff0a8, 0.96);
-    const flash = this.add.circle(worldX, worldY, 8, 0xfff0a8, 0.36);
-    this.tweens.add({
-      targets: ring,
-      scale: 2.25,
-      alpha: 0,
-      duration: 320,
+  async launchFireworkBomb(index) {
+    const palette = [0xff4f6f, 0xffd166, 0x70f5ff, 0x79f27a, 0xb77dff, 0xff8bd1, 0xffffff];
+    const color = palette[index % palette.length];
+    const launchX = Phaser.Math.Between(this.beltStartX + 44, this.beltEndX - 44);
+    const launchY = this.beltCenterY + this.beltHeight / 2 + Phaser.Math.Between(32, 58);
+    const targetX = Phaser.Math.Between(this.boardX + 58, this.boardX + this.boardSize - 58);
+    const targetY = Phaser.Math.Between(this.boardY + 58, this.boardY + this.boardSize - 90);
+    const rocket = this.add.star(launchX, launchY, 5, 3, 8, color, 1);
+    const trailGraphics = this.add.graphics();
+    const trailParticles = [];
+    const duration = Phaser.Math.Between(920, 1260);
+
+    rocket.setDepth(930);
+    trailGraphics.setDepth(920);
+    rocket.setAngle(Phaser.Math.Between(-12, 12));
+
+    await tweenTo(this, rocket, {
+      x: targetX,
+      y: targetY,
+      angle: rocket.angle + Phaser.Math.Between(180, 360),
+      duration,
       ease: "Cubic.easeOut",
-      onComplete: () => ring.destroy(),
-    });
-    this.tweens.add({
-      targets: flash,
-      scale: 8,
-      alpha: 0,
-      duration: 220,
-      ease: "Quad.easeOut",
-      onComplete: () => flash.destroy(),
+      onUpdate: () => {
+        const particle = this.add.circle(
+          rocket.x + Phaser.Math.Between(-3, 3),
+          rocket.y + Phaser.Math.Between(8, 18),
+          Phaser.Math.Between(2, 4),
+          [color, 0xfff1a8, 0xffffff][Phaser.Math.Between(0, 2)],
+          0.74
+        );
+        particle.setDepth(910);
+        trailParticles.push(particle);
+        this.tweens.add({
+          targets: particle,
+          y: particle.y + Phaser.Math.Between(12, 28),
+          alpha: 0,
+          scale: 0.2,
+          duration: 420,
+          ease: "Quad.easeOut",
+          onComplete: () => particle.destroy(),
+        });
+
+        trailGraphics.clear();
+        trailGraphics.lineStyle(3, color, 0.36);
+        trailGraphics.lineBetween(launchX, launchY, rocket.x, rocket.y);
+      },
     });
 
-    for (let index = 0; index < 18; index += 1) {
-      const angle = (Math.PI * 2 * index) / 18;
-      const particle = this.add.circle(worldX, worldY, Phaser.Math.Between(2, 4), 0xf4ead8, 0.95);
+    trailGraphics.destroy();
+    trailParticles.forEach((particle) => {
+      if (particle.active && particle.alpha <= 0.05) {
+        particle.destroy();
+      }
+    });
+    rocket.destroy();
+    return this.burstFireworkBomb(targetX, targetY, color);
+  }
+
+  burstFireworkBomb(worldX, worldY, color) {
+    const cellX = this.worldXToCellX(worldX);
+    const cellY = this.worldYToCellY(worldY);
+    const removedCount = gameState.field.eraseCircle(cellX, cellY, FIREWORK_ERASE_RADIUS_CELLS);
+    this.renderDirtySand();
+    this.cameras.main.shake(130, 0.004);
+
+    const burstColors = [color, 0xffffff, 0xfff1a8, 0x70f5ff, 0xff8bd1];
+    const shock = this.add.circle(worldX, worldY, 10, 0xffffff, 0.2);
+    shock.setDepth(940);
+    shock.setStrokeStyle(3, color, 0.84);
+    this.tweens.add({
+      targets: shock,
+      scale: 8,
+      alpha: 0,
+      duration: 820,
+      ease: "Cubic.easeOut",
+      onComplete: () => shock.destroy(),
+    });
+
+    for (let index = 0; index < 52; index += 1) {
+      const angle = (Math.PI * 2 * index) / 52 + Phaser.Math.FloatBetween(-0.07, 0.07);
+      const distance = Phaser.Math.Between(46, 138);
+      const sparkColor = burstColors[Phaser.Math.Between(0, burstColors.length - 1)];
+      const spark = index % 5 === 0
+        ? this.add.star(worldX, worldY, 5, 2, Phaser.Math.Between(5, 8), sparkColor, 0.98)
+        : this.add.circle(worldX, worldY, Phaser.Math.Between(2, 4), sparkColor, 0.98);
+      spark.setDepth(950);
       this.tweens.add({
-        targets: particle,
-        x: worldX + Math.cos(angle) * Phaser.Math.Between(38, 78),
-        y: worldY + Math.sin(angle) * Phaser.Math.Between(38, 78),
+        targets: spark,
+        x: worldX + Math.cos(angle) * distance,
+        y: worldY + Math.sin(angle) * distance + Phaser.Math.Between(10, 42),
         alpha: 0,
-        scale: 0.2,
-        duration: 300,
-        ease: "Quad.easeOut",
-        onComplete: () => particle.destroy(),
+        scale: 0.1,
+        angle: Phaser.Math.Between(90, 360),
+        duration: Phaser.Math.Between(760, 1180),
+        ease: "Cubic.easeOut",
+        onComplete: () => spark.destroy(),
+      });
+
+      if (index % 4 === 0) {
+        const streak = this.add.graphics();
+        streak.setDepth(945);
+        streak.lineStyle(2, sparkColor, 0.64);
+        streak.lineBetween(
+          worldX,
+          worldY,
+          worldX + Math.cos(angle) * distance * 0.58,
+          worldY + Math.sin(angle) * distance * 0.58
+        );
+        this.tweens.add({
+          targets: streak,
+          alpha: 0,
+          duration: 360,
+          ease: "Quad.easeOut",
+          onComplete: () => streak.destroy(),
+        });
+      }
+    }
+
+    for (let crackleIndex = 0; crackleIndex < 18; crackleIndex += 1) {
+      const crackle = this.add.circle(
+        worldX + Phaser.Math.Between(-78, 78),
+        worldY + Phaser.Math.Between(-64, 64),
+        Phaser.Math.Between(1, 3),
+        burstColors[Phaser.Math.Between(0, burstColors.length - 1)],
+        0
+      );
+      crackle.setDepth(955);
+      this.tweens.add({
+        targets: crackle,
+        alpha: 1,
+        scale: 1.8,
+        yoyo: true,
+        delay: Phaser.Math.Between(110, 360),
+        duration: 90,
+        ease: "Sine.easeInOut",
+        onComplete: () => crackle.destroy(),
       });
     }
+
+    return removedCount;
   }
 
   applySandquake() {
@@ -2696,7 +2805,8 @@ function updatePowerToolState() {
     const isTargeting = gameState.powerTools.activeTargetTool === toolId;
     const cannotUseRainbow = toolId === "rainbowBucket" && gameState.conveyor.isFull();
     const cannotArmPowerBucket = toolId === "suctionBoost" && gameState.conveyor.isFull();
-    button.disabled = !isRunning || !hasSand || uses <= 0 || cannotUseRainbow || cannotArmPowerBucket;
+    const cannotUseBomb = toolId === "bomb" && isFireworkShowRunning;
+    button.disabled = !isRunning || !hasSand || uses <= 0 || cannotUseRainbow || cannotArmPowerBucket || cannotUseBomb;
     button.classList.toggle("is-active", isTargeting);
     button.querySelector(".power-tool-count").textContent = `${uses}`;
   });
@@ -2705,8 +2815,8 @@ function updatePowerToolState() {
     return;
   }
 
-  if (gameState.powerTools.activeTargetTool === "bomb") {
-    elements.powerStatus.textContent = "炸彈模式：點擊畫框內的位置。";
+  if (isFireworkShowRunning) {
+    elements.powerStatus.textContent = "煙火施放中，爆炸會清除沙子。";
   } else if (gameState.powerTools.activeTargetTool === "suctionBoost") {
     elements.powerStatus.textContent = "吸力模式：下一個水桶容量 900，吸底部 9 排。";
   } else {
@@ -2907,9 +3017,32 @@ function handlePowerToolClick(toolId) {
   }
 
   if (toolId === "bomb") {
-    gameState.powerTools.activeTargetTool = gameState.powerTools.activeTargetTool === "bomb" ? null : "bomb";
-    setMessage(gameState.powerTools.activeTargetTool === "bomb" ? "炸彈已準備好，點擊畫框內的位置。" : "取消炸彈。");
+    if (isFireworkShowRunning || !consumePowerToolUse("bomb")) {
+      return;
+    }
+
+    resetDeadlockWait();
+    isFireworkShowRunning = true;
+    setMessage("煙火炸彈開始施放。");
+    addLog("煙火炸彈開始施放。", "red");
     renderUI({ updateSlots: false });
+    const showPromise = sceneRef?.playFireworkBombShow() ?? Promise.resolve(0);
+    void showPromise
+      .then((removedCount = 0) => {
+        if (removedCount > 0) {
+          setMessage(`煙火炸掉 ${removedCount} 顆沙子。`);
+          addLog(`煙火炸掉 ${removedCount} 顆沙子。`, "red");
+        } else {
+          setMessage("煙火沒有炸到沙子。");
+        }
+        updateEndState();
+        startAbsorptionLoop();
+      })
+      .finally(() => {
+        isFireworkShowRunning = false;
+        document.body.classList.remove("is-fireworks-active");
+        renderUI();
+      });
     return;
   }
 
@@ -3152,6 +3285,8 @@ async function resolveAbsorption() {
 function resetGame() {
   gameState = new GameState(currentLevelRows);
   isAbsorptionLoopRunning = false;
+  isFireworkShowRunning = false;
+  document.body.classList.remove("is-fireworks-active");
   resetDeadlockWait();
   lastSlotUiRefreshAt = 0;
   logItems = [];
