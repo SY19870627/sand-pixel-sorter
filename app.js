@@ -29,7 +29,13 @@ const BUCKET_FULL_FEEDBACK_MS = 360;
 const BELT_SPEED_PX_PER_SECOND = 54;
 const BUCKET_SUCTION_HALF_WIDTH = 34;
 const BUCKET_SUCTION_DEPTH_ROWS = 3;
+const POWER_BUCKET_SUCTION_DEPTH_ROWS = 9;
+const POWER_BUCKET_CAPACITY = 900;
 const MAX_SUCKS_PER_BUCKET_TICK = 2;
+const RAINBOW_BUCKET_COLOR_KEY = "rainbow";
+const RAINBOW_BUCKET_CAPACITY = BUCKET_CAPACITY;
+const BOMB_RADIUS_CELLS = 10;
+const SANDQUAKE_STEP_COUNT = 6;
 const STREAM_SUCK_INTERVAL_MS = 4;
 const IDLE_SCAN_INTERVAL_MS = 24;
 const SLOT_UI_REFRESH_MS = 80;
@@ -42,6 +48,37 @@ const WAKE_ABOVE_ROWS = 72;
 const WAKE_BELOW_ROWS = 4;
 const EMPTY_COLOR_ID = 0;
 const SAND_TEXTURE_KEY = "sand-bitmap";
+
+const POWER_TOOL_DEFINITIONS = [
+  {
+    id: "suctionBoost",
+    name: "吸力強化",
+    shortLabel: "吸力",
+    valueLabel: "9排/900",
+    initialUses: 2,
+  },
+  {
+    id: "bomb",
+    name: "炸彈",
+    shortLabel: "炸彈",
+    valueLabel: "範圍",
+    initialUses: 2,
+  },
+  {
+    id: "rainbowBucket",
+    name: "彩虹桶",
+    shortLabel: "彩虹",
+    valueLabel: "萬用",
+    initialUses: 2,
+  },
+  {
+    id: "sandquake",
+    name: "沙瀑震動",
+    shortLabel: "震動",
+    valueLabel: "全場",
+    initialUses: 2,
+  },
+];
 
 const DEFAULT_COLOR_DATA = {
   red: { label: "紅", hex: "#df5148", value: 0xdf5148 },
@@ -117,6 +154,8 @@ const elements = {
   remainingByColor: document.querySelector("#remainingByColor"),
   turnValue: document.querySelector("#turnValue"),
   availableColors: document.querySelector("#availableColors"),
+  powerPalette: document.querySelector("#powerPalette"),
+  powerStatus: document.querySelector("#powerStatus"),
   bucketPalette: document.querySelector("#bucketPalette"),
   messageBar: document.querySelector("#messageBar"),
   eventLog: document.querySelector("#eventLog"),
@@ -129,8 +168,10 @@ let isAbsorptionLoopRunning = false;
 let lastSlotUiRefreshAt = 0;
 let logItems = [];
 let bucketButtons = new Map();
+let powerToolButtons = new Map();
 let beltSpeedIndex = 0;
 let bucketPaletteSignature = "";
+let powerToolSignature = "";
 let deadlockBeltTravel = 0;
 let deadlockLastBeltOffset = null;
 let levelLibraryItems = [];
@@ -506,6 +547,42 @@ function colorFromId(id) {
   return COLOR_KEY_BY_ID[id] ?? null;
 }
 
+function createPowerToolState() {
+  return {
+    activeTargetTool: null,
+    uses: Object.fromEntries(POWER_TOOL_DEFINITIONS.map((tool) => [tool.id, tool.initialUses])),
+  };
+}
+
+function powerToolDefinition(toolId) {
+  return POWER_TOOL_DEFINITIONS.find((tool) => tool.id === toolId) ?? null;
+}
+
+function powerToolUses(toolId) {
+  return gameState?.powerTools?.uses?.[toolId] ?? 0;
+}
+
+function consumePowerToolUse(toolId) {
+  if (!gameState?.powerTools || powerToolUses(toolId) <= 0) {
+    return false;
+  }
+
+  gameState.powerTools.uses[toolId] -= 1;
+  return true;
+}
+
+function currentMaxSucksPerBucketTick() {
+  return MAX_SUCKS_PER_BUCKET_TICK;
+}
+
+function isRainbowBucket(bucket) {
+  return bucket?.canAbsorbAny === true || bucket?.color === RAINBOW_BUCKET_COLOR_KEY;
+}
+
+function isPowerSuctionBucket(bucket) {
+  return bucket?.isPowerSuction === true;
+}
+
 class SandEngine {
   constructor(rows) {
     this.height = rows.length;
@@ -787,13 +864,13 @@ class SandEngine {
     return indices;
   }
 
-  availableColorsInLineRange(minLine, maxLine) {
+  availableColorsInLineRange(minLine, maxLine, maxDepthRows = BUCKET_SUCTION_DEPTH_ROWS) {
     const colors = new Set();
     const min = clampInteger(Math.min(minLine, maxLine), 0, this.lineLimit());
     const max = clampInteger(Math.max(minLine, maxLine), 0, this.lineLimit());
 
     for (let line = min; line <= max; line += 1) {
-      this.getOuterSandIndicesOnLine(line, BUCKET_SUCTION_DEPTH_ROWS).forEach((index) => {
+      this.getOuterSandIndicesOnLine(line, maxDepthRows).forEach((index) => {
         const color = colorFromId(this.getIndex(index));
         if (color !== null) {
           colors.add(color);
@@ -804,7 +881,14 @@ class SandEngine {
     return colors;
   }
 
-  findAbsorbableCellInLineRange(targetColorId, minLine, maxLine, reservedCellIndices = new Set(), preferredLine = null) {
+  findAbsorbableCellInLineRange(
+    targetColorId,
+    minLine,
+    maxLine,
+    reservedCellIndices = new Set(),
+    preferredLine = null,
+    maxDepthRows = BUCKET_SUCTION_DEPTH_ROWS
+  ) {
     const min = clampInteger(Math.min(minLine, maxLine), 0, this.lineLimit());
     const max = clampInteger(Math.max(minLine, maxLine), 0, this.lineLimit());
     const centerLine = preferredLine ?? (min + max) / 2;
@@ -813,7 +897,7 @@ class SandEngine {
     let bestDistance = Infinity;
 
     for (let line = min; line <= max; line += 1) {
-      this.getOuterSandIndicesOnLine(line, BUCKET_SUCTION_DEPTH_ROWS).forEach((index) => {
+      this.getOuterSandIndicesOnLine(line, maxDepthRows).forEach((index) => {
         if (reservedCellIndices.has(index) || this.getIndex(index) !== targetColorId) {
           return;
         }
@@ -829,6 +913,48 @@ class SandEngine {
             cellX,
             cellY,
             colorId: targetColorId,
+          };
+          bestDepth = depth;
+          bestDistance = distance;
+        }
+      });
+    }
+
+    return bestCell;
+  }
+
+  findAnyAbsorbableCellInLineRange(
+    minLine,
+    maxLine,
+    reservedCellIndices = new Set(),
+    preferredLine = null,
+    maxDepthRows = BUCKET_SUCTION_DEPTH_ROWS
+  ) {
+    const min = clampInteger(Math.min(minLine, maxLine), 0, this.lineLimit());
+    const max = clampInteger(Math.max(minLine, maxLine), 0, this.lineLimit());
+    const centerLine = preferredLine ?? (min + max) / 2;
+    let bestCell = null;
+    let bestDepth = -Infinity;
+    let bestDistance = Infinity;
+
+    for (let line = min; line <= max; line += 1) {
+      this.getOuterSandIndicesOnLine(line, maxDepthRows).forEach((index) => {
+        const colorIdAtIndex = this.getIndex(index);
+        if (reservedCellIndices.has(index) || colorIdAtIndex === EMPTY_COLOR_ID) {
+          return;
+        }
+
+        const cellX = this.cellX(index);
+        const cellY = this.cellY(index);
+        const depth = this.gravityDepth(index);
+        const distance = Math.abs(line - centerLine);
+        if (depth > bestDepth || (depth === bestDepth && distance < bestDistance)) {
+          bestCell = {
+            index,
+            id: index,
+            cellX,
+            cellY,
+            colorId: colorIdAtIndex,
           };
           bestDepth = depth;
           bestDistance = distance;
@@ -915,18 +1041,22 @@ class SandEngine {
     const minY = clampInteger(centerY - radius, 0, this.height - 1);
     const maxY = clampInteger(centerY + radius, 0, this.height - 1);
     const radiusSquared = radius * radius;
+    let removedCount = 0;
 
     for (let y = minY; y <= maxY; y += 1) {
       for (let x = minX; x <= maxX; x += 1) {
         const dx = x - centerX;
         const dy = y - centerY;
         if (dx * dx + dy * dy <= radiusSquared) {
-          this.clearIndex(this.index(x, y));
+          if (this.clearIndex(this.index(x, y))) {
+            removedCount += SAND_UNIT_VALUE;
+          }
         }
       }
     }
 
     this.wakeArea(minX - 1, minY - 1, maxX + 1, maxY + 1);
+    return removedCount;
   }
 
   recolorArea(centerX, centerY, radius, color) {
@@ -1008,9 +1138,12 @@ class SandEngine {
 }
 
 class Bucket {
-  constructor(color) {
+  constructor(color, options = {}) {
     this.color = color;
-    this.capacity = BUCKET_CAPACITY;
+    this.capacity = options.capacity ?? BUCKET_CAPACITY;
+    this.canAbsorbAny = options.canAbsorbAny === true;
+    this.suctionDepthRows = options.suctionDepthRows ?? BUCKET_SUCTION_DEPTH_ROWS;
+    this.isPowerSuction = options.isPowerSuction === true;
     this.amount = 0;
   }
 
@@ -1028,7 +1161,7 @@ class Conveyor {
     this.slots = Array.from({ length: slotCount }, () => null);
   }
 
-  placeBucket(color, preferredSlotIndex = null) {
+  placeBucket(color, preferredSlotIndex = null, options = {}) {
     const slotIndex =
       preferredSlotIndex !== null && this.slots[preferredSlotIndex] === null
         ? preferredSlotIndex
@@ -1036,7 +1169,7 @@ class Conveyor {
     if (slotIndex === -1) {
       throw new Error("輸送帶已滿。");
     }
-    this.slots[slotIndex] = new Bucket(color);
+    this.slots[slotIndex] = new Bucket(color, options);
     return slotIndex;
   }
 
@@ -1059,7 +1192,7 @@ class Conveyor {
   removeBucketsWithoutRemainingSand(field) {
     const removed = [];
     this.slots = this.slots.map((bucket) => {
-      if (bucket !== null && !field.hasColor(bucket.color)) {
+      if (bucket !== null && (isRainbowBucket(bucket) ? field.remainingTotal <= 0 : !field.hasColor(bucket.color))) {
         removed.push(bucket);
         return null;
       }
@@ -1085,15 +1218,16 @@ class GameState {
   constructor(rows) {
     this.field = new SandEngine(rows);
     this.conveyor = new Conveyor(SLOT_COUNT);
+    this.powerTools = createPowerToolState();
     this.phase = "running";
     this.turn = 0;
   }
 
-  placeBucket(color, preferredSlotIndex = null) {
+  placeBucket(color, preferredSlotIndex = null, options = {}) {
     if (this.phase !== "running") {
       return null;
     }
-    const slotIndex = this.conveyor.placeBucket(color, preferredSlotIndex);
+    const slotIndex = this.conveyor.placeBucket(color, preferredSlotIndex, options);
     this.turn += 1;
     return slotIndex;
   }
@@ -1119,14 +1253,23 @@ class GameState {
 }
 
 function colorLabel(color) {
+  if (color === RAINBOW_BUCKET_COLOR_KEY) {
+    return "彩虹";
+  }
   return COLOR_DATA[color]?.label ?? color;
 }
 
 function colorHex(color) {
+  if (color === RAINBOW_BUCKET_COLOR_KEY) {
+    return "#f4ead8";
+  }
   return COLOR_DATA[color]?.hex ?? "#8f9893";
 }
 
 function colorValue(color) {
+  if (color === RAINBOW_BUCKET_COLOR_KEY) {
+    return 0xf4ead8;
+  }
   return COLOR_DATA[color]?.value ?? 0x8f9893;
 }
 
@@ -1533,7 +1676,9 @@ function applyConvertedLevel(rows, paletteEntries) {
   setGamePalette(paletteEntries);
   currentLevelRows = rows;
   bucketButtons = new Map();
+  powerToolButtons = new Map();
   bucketPaletteSignature = "";
+  powerToolSignature = "";
   gameState = new GameState(currentLevelRows);
   isAbsorptionLoopRunning = false;
   resetDeadlockWait();
@@ -1623,6 +1768,7 @@ class SandSorterScene extends Phaser.Scene {
     this.drawFrame();
     this.createSandBitmapLayer();
     this.createBeltMasks();
+    this.input.on("pointerdown", (pointer) => this.handleBoardPointerDown(pointer));
 
     sceneRef = this;
     this.syncFromState(gameState);
@@ -1796,7 +1942,7 @@ class SandSorterScene extends Phaser.Scene {
         container.add(slotTick);
       } else {
         const bucketShadow = this.add.ellipse(0, 27, 50, 10, 0x1e1816, 0.24);
-        const bucketVisual = this.createBucketVisual(bucket.color);
+        const bucketVisual = this.createBucketVisual(bucket.color, { isPowerSuction: isPowerSuctionBucket(bucket) });
         const progressPercent = bucket.isFull()
           ? 100
           : Math.floor((bucket.amount / bucket.capacity) * 100);
@@ -1914,15 +2060,25 @@ class SandSorterScene extends Phaser.Scene {
     cleanup();
   }
 
-  createBucketVisual(color) {
+  createBucketVisual(color, options = {}) {
     // 與右側 CSS 水桶使用同樣的輪廓：寬口、略收底的桶身，避免兩邊造型不一致。
     const fillColor = colorValue(color);
     const rimColor = mixColorValue(fillColor, 0xffffff, 0.46);
     const shadowColor = mixColorValue(fillColor, 0x000000, 0.22);
     const container = this.add.container(0, -9);
+    const isRainbow = color === RAINBOW_BUCKET_COLOR_KEY;
+    const isPowerSuction = options.isPowerSuction === true;
+
+    const powerGlow = isPowerSuction ? this.add.graphics() : null;
+    if (powerGlow) {
+      powerGlow.lineStyle(3, 0x70f5ff, 0.84);
+      powerGlow.strokeCircle(0, 5, 33);
+      powerGlow.lineStyle(2, 0xffffff, 0.48);
+      powerGlow.strokeCircle(0, 5, 24);
+    }
 
     const body = this.add.graphics();
-    body.fillStyle(fillColor, 1);
+    body.fillStyle(fillColor, isRainbow ? 0.98 : 1);
     body.lineStyle(2, 0xffffff, 0.42);
     body.beginPath();
     body.moveTo(-22, -6);
@@ -1932,6 +2088,15 @@ class SandSorterScene extends Phaser.Scene {
     body.closePath();
     body.fillPath();
     body.strokePath();
+
+    const rainbowStripes = [];
+    if (isRainbow) {
+      [0xdf5148, 0xd9a928, 0x37a66b, 0x3f79c8, 0x8958bf].forEach((stripeColor, index) => {
+        const stripe = this.add.rectangle(-16 + index * 8, 7, 8, 25, stripeColor, 0.92);
+        stripe.setAngle(-4);
+        rainbowStripes.push(stripe);
+      });
+    }
 
     const rim = this.add.graphics();
     rim.fillStyle(rimColor, 1);
@@ -1965,7 +2130,16 @@ class SandSorterScene extends Phaser.Scene {
     bottomShadow.closePath();
     bottomShadow.fillPath();
 
-    container.add([body, rim, shine, bottomShadow]);
+    const powerMarks = [];
+    if (isPowerSuction) {
+      [-14, 0, 14].forEach((x, index) => {
+        const streak = this.add.rectangle(x, -19 - index * 2, 4, 12, 0x70f5ff, 0.88);
+        streak.setAngle(18 - index * 18);
+        powerMarks.push(streak);
+      });
+    }
+
+    container.add([powerGlow, body, ...rainbowStripes, rim, shine, bottomShadow, ...powerMarks].filter(Boolean));
     return container;
   }
 
@@ -2028,6 +2202,95 @@ class SandSorterScene extends Phaser.Scene {
     };
   }
 
+  isInsideBoard(worldX, worldY) {
+    return worldX >= this.boardX
+      && worldX <= this.boardX + this.boardSize
+      && worldY >= this.boardY
+      && worldY <= this.boardY + this.boardSize;
+  }
+
+  handleBoardPointerDown(pointer) {
+    if (gameState.phase !== "running" || gameState.powerTools.activeTargetTool !== "bomb") {
+      return;
+    }
+
+    if (!this.isInsideBoard(pointer.x, pointer.y)) {
+      return;
+    }
+
+    if (!consumePowerToolUse("bomb")) {
+      gameState.powerTools.activeTargetTool = null;
+      renderUI({ updateSlots: false });
+      return;
+    }
+
+    const cellX = this.worldXToCellX(pointer.x);
+    const cellY = this.worldYToCellY(pointer.y);
+    const removedCount = gameState.field.eraseCircle(cellX, cellY, BOMB_RADIUS_CELLS);
+    gameState.powerTools.activeTargetTool = null;
+    resetDeadlockWait();
+    this.renderDirtySand();
+    this.playBombEffect(pointer.x, pointer.y);
+
+    if (removedCount > 0) {
+      setMessage(`炸彈清掉 ${removedCount} 顆沙子。`);
+      addLog(`炸彈清除 ${removedCount} 顆沙子。`, "red");
+    } else {
+      setMessage("炸彈沒有命中沙子。");
+    }
+
+    updateEndState();
+    renderUI();
+    startAbsorptionLoop();
+  }
+
+  playBombEffect(worldX, worldY) {
+    const ring = this.add.circle(worldX, worldY, BOMB_RADIUS_CELLS * this.pixelWorldSize, 0xffffff, 0);
+    ring.setStrokeStyle(4, 0xfff0a8, 0.96);
+    const flash = this.add.circle(worldX, worldY, 8, 0xfff0a8, 0.36);
+    this.tweens.add({
+      targets: ring,
+      scale: 2.25,
+      alpha: 0,
+      duration: 320,
+      ease: "Cubic.easeOut",
+      onComplete: () => ring.destroy(),
+    });
+    this.tweens.add({
+      targets: flash,
+      scale: 8,
+      alpha: 0,
+      duration: 220,
+      ease: "Quad.easeOut",
+      onComplete: () => flash.destroy(),
+    });
+
+    for (let index = 0; index < 18; index += 1) {
+      const angle = (Math.PI * 2 * index) / 18;
+      const particle = this.add.circle(worldX, worldY, Phaser.Math.Between(2, 4), 0xf4ead8, 0.95);
+      this.tweens.add({
+        targets: particle,
+        x: worldX + Math.cos(angle) * Phaser.Math.Between(38, 78),
+        y: worldY + Math.sin(angle) * Phaser.Math.Between(38, 78),
+        alpha: 0,
+        scale: 0.2,
+        duration: 300,
+        ease: "Quad.easeOut",
+        onComplete: () => particle.destroy(),
+      });
+    }
+  }
+
+  applySandquake() {
+    gameState.field.wakeArea(0, 0, gameState.field.width - 1, gameState.field.height - 1);
+    for (let index = 0; index < SANDQUAKE_STEP_COUNT; index += 1) {
+      gameState.field.stepActiveSand();
+    }
+    gameState.field.wakeArea(0, 0, gameState.field.width - 1, gameState.field.height - 1);
+    this.renderDirtySand();
+    this.cameras.main.shake(280, 0.006);
+  }
+
   getBucketLineRange(slotIndex) {
     const slotCenter = this.getSlotCenter(slotIndex);
     if (gameState.field.sideAxis() === "x") {
@@ -2053,7 +2316,9 @@ class SandSorterScene extends Phaser.Scene {
       }
 
       const { minLine, maxLine } = this.getBucketLineRange(slotIndex);
-      gameState.field.availableColorsInLineRange(minLine, maxLine).forEach((color) => colors.add(color));
+      gameState.field
+        .availableColorsInLineRange(minLine, maxLine, bucket.suctionDepthRows)
+        .forEach((color) => colors.add(color));
     });
 
     return [...colors];
@@ -2064,11 +2329,23 @@ class SandSorterScene extends Phaser.Scene {
       if (bucket === null || bucket.isFull()) {
         return false;
       }
-      return this.findAbsorbableCell(bucket.color, new Set(), slotIndex) !== null;
+      return this.findAbsorbableCellForBucket(bucket, new Set(), slotIndex) !== null;
     });
   }
 
-  findAbsorbableCell(color, reservedCellIndices = new Set(), slotIndex = null) {
+  findAbsorbableCellForBucket(bucket, reservedCellIndices = new Set(), slotIndex = null) {
+    if (isRainbowBucket(bucket)) {
+      return this.findAnyAbsorbableCell(reservedCellIndices, slotIndex, bucket.suctionDepthRows);
+    }
+    return this.findAbsorbableCell(bucket.color, reservedCellIndices, slotIndex, bucket.suctionDepthRows);
+  }
+
+  findAbsorbableCell(
+    color,
+    reservedCellIndices = new Set(),
+    slotIndex = null,
+    suctionDepthRows = BUCKET_SUCTION_DEPTH_ROWS
+  ) {
     if (slotIndex === null) {
       return null;
     }
@@ -2080,7 +2357,8 @@ class SandSorterScene extends Phaser.Scene {
       minLine,
       maxLine,
       reservedCellIndices,
-      centerLine
+      centerLine,
+      suctionDepthRows
     );
 
     if (cell === null) {
@@ -2090,6 +2368,32 @@ class SandSorterScene extends Phaser.Scene {
     return { ...cell, color };
   }
 
+  findAnyAbsorbableCell(
+    reservedCellIndices = new Set(),
+    slotIndex = null,
+    suctionDepthRows = BUCKET_SUCTION_DEPTH_ROWS
+  ) {
+    if (slotIndex === null) {
+      return null;
+    }
+
+    const { minLine, maxLine, centerLine } = this.getBucketLineRange(slotIndex);
+    const cell = gameState.field.findAnyAbsorbableCellInLineRange(
+      minLine,
+      maxLine,
+      reservedCellIndices,
+      centerLine,
+      suctionDepthRows
+    );
+
+    if (cell === null) {
+      return null;
+    }
+
+    const color = colorFromId(cell.colorId);
+    return color === null ? null : { ...cell, color };
+  }
+
   updateSandAutomata(delta) {
     const stepped = gameState.field.update(delta);
     if (stepped || gameState.field.hasDirtyCells()) {
@@ -2097,33 +2401,73 @@ class SandSorterScene extends Phaser.Scene {
     }
   }
 
-  spawnAbsorbParticles(fromPosition, toPosition, color) {
-    for (let index = 0; index < SUCK_TRAIL_COUNT; index += 1) {
+  spawnAbsorbParticles(fromPosition, toPosition, color, options = {}) {
+    const isPowerSuction = options.isPowerSuction === true;
+    const particleCount = isPowerSuction ? SUCK_TRAIL_COUNT * 3 : SUCK_TRAIL_COUNT;
+    const startSpread = isPowerSuction ? 14 : 4;
+    const endSpread = isPowerSuction ? 34 : 18;
+    const particleMaxSize = isPowerSuction ? 5 : 3;
+    const trailDuration = isPowerSuction ? SUCK_TRAIL_MS + 42 : SUCK_TRAIL_MS;
+
+    if (isPowerSuction) {
+      for (let beamIndex = 0; beamIndex < 3; beamIndex += 1) {
+        const beam = this.add.graphics();
+        beam.lineStyle(2 + beamIndex, 0x70f5ff, 0.34 - beamIndex * 0.07);
+        beam.lineBetween(
+          fromPosition.x + Phaser.Math.Between(-10, 10),
+          fromPosition.y + Phaser.Math.Between(-10, 10),
+          toPosition.x + Phaser.Math.Between(-26, 26),
+          toPosition.y + Phaser.Math.Between(-24, 14)
+        );
+        this.tweens.add({
+          targets: beam,
+          alpha: 0,
+          duration: trailDuration,
+          ease: "Quad.easeOut",
+          onComplete: () => beam.destroy(),
+        });
+      }
+
+      const vortex = this.add.circle(toPosition.x, toPosition.y - 10, 25, 0xffffff, 0);
+      vortex.setStrokeStyle(3, 0x70f5ff, 0.68);
+      this.tweens.add({
+        targets: vortex,
+        scale: 1.9,
+        angle: 180,
+        alpha: 0,
+        duration: trailDuration + 60,
+        ease: "Cubic.easeOut",
+        onComplete: () => vortex.destroy(),
+      });
+    }
+
+    for (let index = 0; index < particleCount; index += 1) {
       const particle = this.add.circle(
-        fromPosition.x + Phaser.Math.Between(-4, 4),
-        fromPosition.y + Phaser.Math.Between(-4, 4),
-        Phaser.Math.Between(1, 3),
-        colorValue(color),
+        fromPosition.x + Phaser.Math.Between(-startSpread, startSpread),
+        fromPosition.y + Phaser.Math.Between(-startSpread, startSpread),
+        Phaser.Math.Between(1, particleMaxSize),
+        isPowerSuction && index % 3 === 0 ? 0x70f5ff : colorValue(color),
         0.95
       );
-      const delay = index * 4;
+      const delay = isPowerSuction ? index * 2 : index * 4;
       this.tweens.add({
         targets: particle,
-        x: toPosition.x + Phaser.Math.Between(-18, 18),
-        y: toPosition.y + Phaser.Math.Between(-18, 10),
+        x: toPosition.x + Phaser.Math.Between(-endSpread, endSpread),
+        y: toPosition.y + Phaser.Math.Between(-endSpread, 10),
         alpha: 0,
-        scale: 0.35,
+        scale: isPowerSuction ? 0.12 : 0.35,
         delay,
-        duration: SUCK_TRAIL_MS,
+        duration: trailDuration,
         ease: "Cubic.easeIn",
         onComplete: () => particle.destroy(),
       });
     }
   }
 
-  async suckCell(cell, slotIndex) {
+  async suckCell(cell, slotIndex, bucket = null) {
     const slotCenter = this.getSlotCenter(slotIndex);
     const fromPosition = this.cellToWorldPosition(cell.cellX, cell.cellY);
+    const isPowerSuction = isPowerSuctionBucket(bucket);
 
     if (!gameState.field.clearIndex(cell.index)) {
       return;
@@ -2132,13 +2476,16 @@ class SandSorterScene extends Phaser.Scene {
     gameState.field.activateCellNeighborhood(cell.cellX, cell.cellY);
     gameState.field.wakeLocalSand(cell.cellX, cell.cellY);
     this.renderDirtySand();
-    this.spawnAbsorbParticles(fromPosition, slotCenter, cell.color);
+    this.spawnAbsorbParticles(fromPosition, slotCenter, cell.color, { isPowerSuction });
+    if (isPowerSuction && Math.random() < 0.18) {
+      this.cameras.main.shake(45, 0.0018);
+    }
 
     const suckedPixel = this.add.rectangle(
       fromPosition.x,
       fromPosition.y,
-      Math.max(2, this.pixelWorldSize),
-      Math.max(2, this.pixelWorldSize),
+      Math.max(isPowerSuction ? 3 : 2, this.pixelWorldSize * (isPowerSuction ? 1.8 : 1)),
+      Math.max(isPowerSuction ? 3 : 2, this.pixelWorldSize * (isPowerSuction ? 1.8 : 1)),
       colorValue(cell.color),
       0.96
     );
@@ -2217,6 +2564,75 @@ function renderBucketPalette() {
   }
 
   updateBucketPaletteState();
+}
+
+function renderPowerTools() {
+  if (!elements.powerPalette) {
+    return;
+  }
+
+  const signature = POWER_TOOL_DEFINITIONS.map((tool) => tool.id).join("|");
+  if (powerToolButtons.size === 0 || powerToolSignature !== signature) {
+    powerToolSignature = signature;
+    powerToolButtons = new Map();
+    elements.powerPalette.replaceChildren();
+
+    POWER_TOOL_DEFINITIONS.forEach((tool) => {
+      const button = document.createElement("button");
+      button.className = `power-tool-button power-tool-${tool.id}`;
+      button.type = "button";
+      button.dataset.tool = tool.id;
+      button.setAttribute("aria-label", tool.name);
+
+      const name = document.createElement("span");
+      name.className = "power-tool-name";
+      name.textContent = tool.shortLabel;
+
+      const value = document.createElement("strong");
+      value.className = "power-tool-value";
+      value.textContent = tool.valueLabel;
+
+      const count = document.createElement("span");
+      count.className = "power-tool-count";
+
+      button.append(name, value, count);
+      button.addEventListener("click", () => handlePowerToolClick(tool.id));
+      powerToolButtons.set(tool.id, button);
+      elements.powerPalette.append(button);
+    });
+  }
+
+  updatePowerToolState();
+}
+
+function updatePowerToolState() {
+  if (!gameState?.powerTools) {
+    return;
+  }
+
+  const isRunning = gameState.phase === "running";
+  const hasSand = gameState.field.remainingTotal > 0;
+  powerToolButtons.forEach((button, toolId) => {
+    const uses = powerToolUses(toolId);
+    const isTargeting = gameState.powerTools.activeTargetTool === toolId;
+    const cannotUseRainbow = toolId === "rainbowBucket" && gameState.conveyor.isFull();
+    const cannotArmPowerBucket = toolId === "suctionBoost" && gameState.conveyor.isFull();
+    button.disabled = !isRunning || !hasSand || uses <= 0 || cannotUseRainbow || cannotArmPowerBucket;
+    button.classList.toggle("is-active", isTargeting);
+    button.querySelector(".power-tool-count").textContent = `${uses}`;
+  });
+
+  if (!elements.powerStatus) {
+    return;
+  }
+
+  if (gameState.powerTools.activeTargetTool === "bomb") {
+    elements.powerStatus.textContent = "炸彈模式：點擊畫框內的位置。";
+  } else if (gameState.powerTools.activeTargetTool === "suctionBoost") {
+    elements.powerStatus.textContent = "吸力模式：下一個水桶容量 900，吸底部 9 排。";
+  } else {
+    elements.powerStatus.textContent = "";
+  }
 }
 
 function updateBucketPaletteState() {
@@ -2326,6 +2742,7 @@ function renderUI({ updateSlots = true } = {}) {
   renderRemainingByColor();
   renderGravityButton();
   renderAvailableColors();
+  renderPowerTools();
   renderBucketPalette();
   if (updateSlots) {
     sceneRef?.updateBucketSlots(gameState.conveyor.slots);
@@ -2345,20 +2762,116 @@ async function handleBucketClick(color) {
   }
 
   let slotIndex;
+  const shouldUsePowerSuction = gameState.powerTools.activeTargetTool === "suctionBoost";
   try {
     resetDeadlockWait();
     const preferredSlotIndex = sceneRef?.findLeftmostEmptySlot(gameState.conveyor.slots) ?? null;
-    slotIndex = gameState.placeBucket(color, preferredSlotIndex);
+    slotIndex = gameState.placeBucket(color, preferredSlotIndex, shouldUsePowerSuction
+      ? {
+          capacity: POWER_BUCKET_CAPACITY,
+          suctionDepthRows: POWER_BUCKET_SUCTION_DEPTH_ROWS,
+          isPowerSuction: true,
+        }
+      : {});
   } catch (error) {
     setMessage(error.message);
     return;
   }
 
-  setMessage(`${colorLabel(color)}桶進入槽 ${slotIndex + 1}。`);
-  addLog(`放入${colorLabel(color)}桶。`, color);
+  if (shouldUsePowerSuction) {
+    consumePowerToolUse("suctionBoost");
+    gameState.powerTools.activeTargetTool = null;
+    setMessage(`${colorLabel(color)}強力桶進入槽 ${slotIndex + 1}，容量 900，可吸底部 9 排。`);
+    addLog(`放入${colorLabel(color)}強力桶。`, color);
+  } else {
+    setMessage(`${colorLabel(color)}桶進入槽 ${slotIndex + 1}。`);
+    addLog(`放入${colorLabel(color)}桶。`, color);
+  }
   renderUI();
 
   startAbsorptionLoop();
+}
+
+function placeRainbowBucket() {
+  if (gameState.phase !== "running" || gameState.conveyor.isFull()) {
+    return false;
+  }
+
+  let slotIndex;
+  try {
+    resetDeadlockWait();
+    const preferredSlotIndex = sceneRef?.findLeftmostEmptySlot(gameState.conveyor.slots) ?? null;
+    slotIndex = gameState.placeBucket(RAINBOW_BUCKET_COLOR_KEY, preferredSlotIndex, {
+      canAbsorbAny: true,
+      capacity: RAINBOW_BUCKET_CAPACITY,
+    });
+  } catch (error) {
+    setMessage(error.message);
+    return false;
+  }
+
+  setMessage(`彩虹桶進入槽 ${slotIndex + 1}，可以吸任何顏色。`);
+  addLog("放入彩虹桶。", RAINBOW_BUCKET_COLOR_KEY);
+  renderUI();
+  startAbsorptionLoop();
+  return true;
+}
+
+function handlePowerToolClick(toolId) {
+  if (gameState.phase !== "running") {
+    return;
+  }
+
+  const tool = powerToolDefinition(toolId);
+  if (tool === null || powerToolUses(toolId) <= 0) {
+    return;
+  }
+
+  if (toolId === "bomb") {
+    gameState.powerTools.activeTargetTool = gameState.powerTools.activeTargetTool === "bomb" ? null : "bomb";
+    setMessage(gameState.powerTools.activeTargetTool === "bomb" ? "炸彈已準備好，點擊畫框內的位置。" : "取消炸彈。");
+    renderUI({ updateSlots: false });
+    return;
+  }
+
+  if (toolId === "suctionBoost") {
+    if (gameState.conveyor.isFull()) {
+      setMessage("輸送帶已滿，無法準備強力桶。");
+      return;
+    }
+
+    gameState.powerTools.activeTargetTool =
+      gameState.powerTools.activeTargetTool === "suctionBoost" ? null : "suctionBoost";
+    setMessage(
+      gameState.powerTools.activeTargetTool === "suctionBoost"
+        ? "吸力模式已準備好，下一個放下的水桶會變成 900 容量並吸底部 9 排。"
+        : "取消吸力模式。"
+    );
+    renderUI({ updateSlots: false });
+    return;
+  }
+
+  if (toolId === "rainbowBucket") {
+    if (!placeRainbowBucket()) {
+      return;
+    }
+    consumePowerToolUse(toolId);
+    renderUI();
+    return;
+  }
+
+  if (!consumePowerToolUse(toolId)) {
+    return;
+  }
+
+  if (toolId === "sandquake") {
+    resetDeadlockWait();
+    sceneRef?.applySandquake();
+    setMessage("沙瀑震動啟動，整張沙畫開始鬆動。");
+    addLog("沙瀑震動啟動。", "yellow");
+    renderUI();
+    startAbsorptionLoop();
+  }
 }
 
 function startAbsorptionLoop() {
@@ -2479,8 +2992,8 @@ async function resolveAbsorption() {
         continue;
       }
 
-      for (let suckCount = 0; suckCount < MAX_SUCKS_PER_BUCKET_TICK && !bucket.isFull(); suckCount += 1) {
-        const cell = sceneRef?.findAbsorbableCell(bucket.color, reservedCellIndices, slotIndex) ?? null;
+      for (let suckCount = 0; suckCount < currentMaxSucksPerBucketTick() && !bucket.isFull(); suckCount += 1) {
+        const cell = sceneRef?.findAbsorbableCellForBucket(bucket, reservedCellIndices, slotIndex) ?? null;
         if (cell === null) {
           break;
         }
@@ -2488,12 +3001,16 @@ async function resolveAbsorption() {
         reservedCellIndices.add(cell.index);
         bucket.absorb();
 
-        setMessage("水桶正在吸入正上方底層沙像素。");
-        addLog(`${colorLabel(bucket.color)}桶 +${SAND_UNIT_VALUE}。`, bucket.color);
+        setMessage(
+          isPowerSuctionBucket(bucket)
+            ? "強力桶正在拉起底部 9 排沙子。"
+            : "水桶正在吸入正上方底層沙像素。"
+        );
+        addLog(`${colorLabel(bucket.color)}${isPowerSuctionBucket(bucket) ? "強力桶" : "桶"} +${SAND_UNIT_VALUE}。`, cell.color);
         startedThisTick += 1;
 
         const animation = sceneRef
-          .suckCell(cell, slotIndex)
+          .suckCell(cell, slotIndex, bucket)
           .catch(() => undefined)
           .finally(() => {
             pendingAnimations.delete(animation);

@@ -275,6 +275,7 @@ h2 {
 .reset-button,
 .gravity-button,
 .speed-button,
+.power-tool-button,
 .bucket-button {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -297,6 +298,7 @@ h2 {
 .reset-button:hover,
 .gravity-button:hover,
 .speed-button:hover,
+.power-tool-button:hover:not(:disabled),
 .bucket-button:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--accent) 56%, var(--line));
   box-shadow: 0 8px 20px rgba(38, 127, 120, 0.14);
@@ -581,6 +583,7 @@ h2 {
 }
 
 .swatch-list,
+.power-palette,
 .bucket-palette {
   display: grid;
   gap: 8px;
@@ -710,6 +713,100 @@ h2 {
 
 .bucket-palette {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.power-palette {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 8px;
+}
+
+.power-tool-button {
+  position: relative;
+  display: grid;
+  min-height: 70px;
+  align-content: center;
+  justify-items: start;
+  gap: 2px;
+  overflow: hidden;
+  padding: 9px 10px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(237, 242, 234, 0.72)),
+    var(--panel);
+}
+
+.power-tool-button::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 6px;
+  background: var(--tool-accent, var(--accent));
+}
+
+.power-tool-button.is-active {
+  border-color: var(--tool-accent, var(--accent));
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--tool-accent, var(--accent)) 18%, transparent),
+    0 8px 20px rgba(38, 127, 120, 0.14);
+}
+
+.power-tool-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.power-tool-name {
+  color: #26312d;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.power-tool-value {
+  color: var(--tool-accent, var(--accent));
+  font-size: 18px;
+  line-height: 1;
+}
+
+.power-tool-count {
+  position: absolute;
+  right: 7px;
+  top: 7px;
+  display: grid;
+  min-width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 999px;
+  color: #ffffff;
+  background: var(--tool-accent, var(--accent));
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.power-tool-suctionBoost {
+  --tool-accent: #267f78;
+}
+
+.power-tool-bomb {
+  --tool-accent: #b94b4b;
+}
+
+.power-tool-rainbowBucket {
+  --tool-accent: #8958bf;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.68)),
+    linear-gradient(120deg, #df5148, #d9a928, #37a66b, #3f79c8, #8958bf);
+}
+
+.power-tool-sandquake {
+  --tool-accent: #7b4a32;
+}
+
+.power-status {
+  min-height: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
 }
 
 .bucket-button {
