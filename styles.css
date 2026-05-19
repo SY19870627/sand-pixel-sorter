@@ -826,11 +826,58 @@ h2 {
 }
 
 .power-tool-suctionBoost {
-  --tool-accent: #267f78;
+  --tool-accent: #26766f;
+  padding-right: 58px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(79, 151, 142, 0.16)),
+    var(--panel);
+}
+
+.power-tool-suctionBoost::after {
+  content: "";
+  position: absolute;
+  right: 13px;
+  bottom: 11px;
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(244, 250, 244, 0.9) 0 10%, transparent 11%),
+    conic-gradient(from 20deg, #206760, #4da79d, #d7e6dc, #2e8d82, #206760);
+  box-shadow:
+    inset 0 0 0 4px rgba(255, 255, 255, 0.42),
+    0 0 0 2px rgba(255, 255, 255, 0.58),
+    0 5px 12px rgba(45, 112, 103, 0.24);
+  animation: suctionToolSpin 760ms linear infinite;
 }
 
 .power-tool-bomb {
-  --tool-accent: #b94b4b;
+  --tool-accent: #ad4747;
+  padding-right: 58px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(184, 91, 73, 0.16)),
+    var(--panel);
+}
+
+.power-tool-bomb::after {
+  content: "";
+  position: absolute;
+  right: 12px;
+  bottom: 11px;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 248, 226, 0.92) 0 7%, transparent 8%),
+    radial-gradient(circle at 50% 16%, #dfc76f 0 7%, transparent 8%),
+    radial-gradient(circle at 84% 50%, #5aa7b8 0 7%, transparent 8%),
+    radial-gradient(circle at 50% 84%, #c8769b 0 7%, transparent 8%),
+    radial-gradient(circle at 16% 50%, #70a966 0 7%, transparent 8%),
+    conic-gradient(from 12deg, transparent 0 8%, #c84a5f 9% 13%, transparent 14% 24%, #d6a847 25% 30%, transparent 31% 43%, #4f9eae 44% 49%, transparent 50% 63%, #6ca35e 64% 69%, transparent 70% 82%, #b96593 83% 88%, transparent 89%);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.58),
+    0 5px 12px rgba(154, 65, 65, 0.24);
+  animation: fireworkToolBurst 840ms ease-in-out infinite;
 }
 
 .power-tool-rocket {
@@ -1022,6 +1069,36 @@ h2 {
   }
   100% {
     transform: translateY(0);
+  }
+}
+
+@keyframes suctionToolSpin {
+  0% {
+    filter: brightness(0.95) saturate(1.05);
+    transform: rotate(0deg) scale(0.94);
+  }
+  50% {
+    filter: brightness(1.14) saturate(1.14);
+    transform: rotate(180deg) scale(1.04);
+  }
+  100% {
+    filter: brightness(0.95) saturate(1.05);
+    transform: rotate(360deg) scale(0.94);
+  }
+}
+
+@keyframes fireworkToolBurst {
+  0% {
+    filter: brightness(0.92) saturate(1.05);
+    transform: scale(0.82) rotate(-8deg);
+  }
+  45% {
+    filter: brightness(1.2) saturate(1.22);
+    transform: scale(1.04) rotate(8deg);
+  }
+  100% {
+    filter: brightness(1) saturate(1.08);
+    transform: scale(0.9) rotate(18deg);
   }
 }
 

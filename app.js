@@ -44,6 +44,15 @@ const ROCKET_ASCENT_MS = 1380;
 const ROCKET_BURN_RADIUS_CELLS = 6;
 const ROCKET_BURN_SAMPLE_STEP_PX = 12;
 const ROCKET_EXIT_DELAY_MS = 520;
+const COLOR_COMBO_MILESTONES = [
+  { ratio: 0.1, percent: 10, label: "清除 10%", intensity: 0.95 },
+  { ratio: 0.25, percent: 25, label: "清除 25%", intensity: 1.15 },
+  { ratio: 0.5, percent: 50, label: "清除 50%", intensity: 1.4 },
+  { ratio: 0.75, percent: 75, label: "清除 75%", intensity: 1.65 },
+  { ratio: 1, percent: 100, label: "清除 100%", intensity: 1.95 },
+];
+const COLOR_COMBO_SAMPLE_COUNT = 72;
+const COLOR_COMBO_SPARK_COUNT = 32;
 const SANDWORM_TUNNEL_COUNT = 3;
 const SANDWORM_STEP_COUNT = 108;
 const SANDWORM_ERASE_RADIUS_CELLS = 5;
@@ -66,8 +75,8 @@ const POWER_TOOL_DEFINITIONS = [
   {
     id: "suctionBoost",
     name: "吸力強化",
-    shortLabel: "吸力",
-    valueLabel: "9排/900",
+    shortLabel: "水桶",
+    valueLabel: "強力",
     initialUses: 2,
   },
   {
@@ -88,7 +97,7 @@ const POWER_TOOL_DEFINITIONS = [
     id: "rainbowBucket",
     name: "彩虹桶",
     shortLabel: "彩虹",
-    valueLabel: "萬用900",
+    valueLabel: "萬用",
     initialUses: 2,
   },
   {
@@ -695,6 +704,37 @@ class SandEngine {
     return id !== EMPTY_COLOR_ID && this.colorCounts[id] > 0;
   }
 
+  sampleCellsByColorId(targetColorId, limit = COLOR_COMBO_SAMPLE_COUNT) {
+    if (targetColorId === EMPTY_COLOR_ID || limit <= 0 || this.colorCounts[targetColorId] <= 0) {
+      return [];
+    }
+
+    const samples = [];
+    const sampleStep = Math.max(1, Math.floor(this.colorCounts[targetColorId] / limit));
+    let matchedCount = 0;
+
+    for (let index = 0; index < this.colorGrid.length; index += 1) {
+      if (this.colorGrid[index] !== targetColorId) {
+        continue;
+      }
+
+      if (matchedCount % sampleStep === 0) {
+        samples.push({
+          index,
+          cellX: this.cellX(index),
+          cellY: this.cellY(index),
+        });
+      }
+
+      matchedCount += 1;
+      if (samples.length >= limit) {
+        break;
+      }
+    }
+
+    return samples;
+  }
+
   markDirty(index) {
     if (this.isInsideIndex(index)) {
       this.dirtyCells.add(index);
@@ -1246,6 +1286,8 @@ class GameState {
     this.phase = "running";
     this.turn = 0;
     this.money = 0;
+    this.initialColorCounts = Uint32Array.from(this.field.colorCounts);
+    this.nextColorComboMilestone = new Uint8Array(COLOR_ORDER.length + 1);
   }
 
   placeBucket(color, preferredSlotIndex = null, options = {}) {
@@ -1276,6 +1318,39 @@ class GameState {
     const reward = bucketCount * FULL_BUCKET_REWARD_MONEY;
     this.money += reward;
     return reward;
+  }
+
+  checkColorComboProgress(color) {
+    const id = colorId(color);
+    const initialCount = this.initialColorCounts[id] ?? 0;
+    if (id === EMPTY_COLOR_ID || initialCount <= 0) {
+      return [];
+    }
+
+    const remainingCount = this.field.colorCounts[id] ?? 0;
+    const clearedRatio = (initialCount - remainingCount) / initialCount;
+    const triggeredEvents = [];
+    let nextMilestoneIndex = this.nextColorComboMilestone[id] ?? 0;
+
+    while (
+      nextMilestoneIndex < COLOR_COMBO_MILESTONES.length
+      && clearedRatio >= COLOR_COMBO_MILESTONES[nextMilestoneIndex].ratio
+    ) {
+      const milestone = COLOR_COMBO_MILESTONES[nextMilestoneIndex];
+      triggeredEvents.push({
+        color,
+        colorId: id,
+        ...milestone,
+      });
+      nextMilestoneIndex += 1;
+    }
+
+    this.nextColorComboMilestone[id] = nextMilestoneIndex;
+    return triggeredEvents;
+  }
+
+  checkAllColorComboProgress(colors = COLOR_ORDER) {
+    return colors.flatMap((color) => this.checkColorComboProgress(color));
   }
 
   isDeadlocked(hasAnyBucketAbsorbable = false) {
@@ -2423,6 +2498,7 @@ class SandSorterScene extends Phaser.Scene {
     const cellY = this.worldYToCellY(worldY);
     const removedCount = gameState.field.eraseCircle(cellX, cellY, FIREWORK_ERASE_RADIUS_CELLS);
     this.renderDirtySand();
+    this.playPendingColorComboBursts({ x: worldX, y: worldY });
     this.cameras.main.shake(130, 0.004);
 
     const burstColors = [color, 0xffffff, 0xfff1a8, 0x70f5ff, 0xff8bd1];
@@ -2709,6 +2785,7 @@ class SandSorterScene extends Phaser.Scene {
 
     if (removedCount > 0) {
       this.renderDirtySand();
+      this.playPendingColorComboBursts({ x: worldX, y: Math.max(this.boardY + 56, minWorldY) });
       this.cameras.main.shake(34, 0.0018);
     }
 
@@ -2734,6 +2811,146 @@ class SandSorterScene extends Phaser.Scene {
       ease: "Quad.easeOut",
       onComplete: () => spark.destroy(),
     });
+  }
+
+  playPendingColorComboBursts(originPosition, colors = COLOR_ORDER) {
+    const comboEvents = gameState.checkAllColorComboProgress(colors);
+    comboEvents.forEach((comboEvent, index) => {
+      const spreadOrigin = {
+        x: Phaser.Math.Clamp(
+          originPosition.x + (index - (comboEvents.length - 1) / 2) * 34,
+          this.boardX + 40,
+          this.boardX + this.boardSize - 40
+        ),
+        y: Phaser.Math.Clamp(originPosition.y, this.boardY + 42, this.boardY + this.boardSize - 42),
+      };
+      setMessage(`${comboEvent.label} 炸裂，清除已達 ${comboEvent.percent}%！`);
+      addLog(`${comboEvent.label} 炸裂。`, comboEvent.color);
+      this.playColorComboBurst(comboEvent, spreadOrigin);
+    });
+    return comboEvents.length;
+  }
+
+  playColorComboBurst(comboEvent, originPosition) {
+    const baseColor = colorValue(comboEvent.color);
+    const burstCells = gameState.field.sampleCellsByColorId(
+      comboEvent.colorId,
+      Math.round(COLOR_COMBO_SAMPLE_COUNT * comboEvent.intensity)
+    );
+    const textColor = colorHex(comboEvent.color);
+    const bannerX = this.boardX + this.boardSize / 2;
+    const bannerY = this.boardY + 72;
+    const boardFlash = this.add.rectangle(
+      this.boardX + this.boardSize / 2,
+      this.boardY + this.boardSize / 2,
+      this.boardSize,
+      this.boardSize,
+      baseColor,
+      0.2
+    );
+    boardFlash.setDepth(941);
+    boardFlash.setBlendMode(Phaser.BlendModes.ADD);
+    this.tweens.add({
+      targets: boardFlash,
+      alpha: 0,
+      duration: 980,
+      ease: "Cubic.easeOut",
+      onComplete: () => boardFlash.destroy(),
+    });
+
+    const comboBucket = this.createBucketVisual(comboEvent.color);
+    comboBucket.setScale(0.88);
+
+    const comboText = this.add.text(
+      0,
+      0,
+      comboEvent.label,
+      {
+        fontFamily: "\"Noto Sans TC\", \"Microsoft JhengHei\", sans-serif",
+        fontSize: `${Math.round(34 + comboEvent.intensity * 7)}px`,
+        fontStyle: "bold",
+        color: textColor,
+        stroke: "#202620",
+        strokeThickness: 9,
+      }
+    );
+    comboText.setOrigin(0, 0.5);
+
+    const bucketWidth = 48 * comboBucket.scaleX;
+    const comboGap = 14;
+    const comboWidth = bucketWidth + comboGap + comboText.width;
+    comboBucket.setPosition(-comboWidth / 2 + bucketWidth / 2, 5);
+    comboText.setPosition(-comboWidth / 2 + bucketWidth + comboGap, 0);
+
+    const comboBanner = this.add.container(bannerX, bannerY, [comboBucket, comboText]);
+    comboBanner.setDepth(970);
+    comboBanner.setScale(0.92);
+
+    this.tweens.add({
+      targets: comboBanner,
+      y: comboBanner.y - 58,
+      alpha: 0,
+      scale: 1.34,
+      duration: 1500,
+      ease: "Cubic.easeOut",
+      onComplete: () => comboBanner.destroy(),
+    });
+
+    const originRing = this.add.circle(originPosition.x, originPosition.y, 16, 0xffffff, 0.12);
+    originRing.setDepth(948);
+    originRing.setStrokeStyle(7, baseColor, 0.96);
+    this.tweens.add({
+      targets: originRing,
+      scale: 7.6 * comboEvent.intensity,
+      alpha: 0,
+      duration: 1040,
+      ease: "Cubic.easeOut",
+      onComplete: () => originRing.destroy(),
+    });
+
+    burstCells.forEach((cell, index) => {
+      const position = this.cellToWorldPosition(cell.cellX, cell.cellY);
+      const delay = (index % 9) * 22;
+      const flash = index % 3 === 0
+        ? this.add.star(position.x, position.y, 5, 2, 6, baseColor, 0.9)
+        : this.add.circle(position.x, position.y, Phaser.Math.Between(2, 4), baseColor, 0.82);
+      flash.setDepth(944);
+      this.tweens.add({
+        targets: flash,
+        alpha: 0,
+        scale: Phaser.Math.FloatBetween(3.2, 5.4) * comboEvent.intensity,
+        angle: Phaser.Math.Between(120, 360),
+        delay,
+        duration: Phaser.Math.Between(620, 1060),
+        ease: "Cubic.easeOut",
+        onComplete: () => flash.destroy(),
+      });
+    });
+
+    for (let index = 0; index < Math.round(COLOR_COMBO_SPARK_COUNT * comboEvent.intensity); index += 1) {
+      const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+      const distance = Phaser.Math.Between(22, 78) * comboEvent.intensity;
+      const spark = this.add.circle(
+        originPosition.x,
+        originPosition.y,
+        Phaser.Math.Between(2, 5),
+        [baseColor, 0xffffff, 0xfff1a8][Phaser.Math.Between(0, 2)],
+        0.92
+      );
+      spark.setDepth(952);
+      this.tweens.add({
+        targets: spark,
+        x: originPosition.x + Math.cos(angle) * distance,
+        y: originPosition.y + Math.sin(angle) * distance,
+        alpha: 0,
+        scale: 0.22,
+        duration: Phaser.Math.Between(420, 720),
+        ease: "Cubic.easeOut",
+        onComplete: () => spark.destroy(),
+      });
+    }
+
+    this.cameras.main.shake(70 + comboEvent.intensity * 40, 0.0018 + comboEvent.intensity * 0.0009);
   }
 
   async playSandWormFeast() {
@@ -2772,6 +2989,7 @@ class SandSorterScene extends Phaser.Scene {
         this.spawnSandWormCrumbs(position);
         if (step % 2 === 0) {
           this.renderDirtySand();
+          this.playPendingColorComboBursts(position);
         }
       }
 
@@ -3104,6 +3322,7 @@ class SandSorterScene extends Phaser.Scene {
     gameState.field.activateCellNeighborhood(cell.cellX, cell.cellY);
     gameState.field.wakeLocalSand(cell.cellX, cell.cellY);
     this.renderDirtySand();
+    this.playPendingColorComboBursts(fromPosition, [cell.color]);
     this.spawnAbsorbParticles(fromPosition, slotCenter, cell.color, { isPowerSuction });
     if (isPowerSuction && Math.random() < 0.18) {
       this.cameras.main.shake(45, 0.0018);
