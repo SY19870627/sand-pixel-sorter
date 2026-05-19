@@ -818,6 +818,32 @@ h2 {
   --tool-accent: #b94b4b;
 }
 
+.power-tool-rocket {
+  --tool-accent: #e16a34;
+  padding-right: 56px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(255, 214, 159, 0.3)),
+    var(--panel);
+}
+
+.power-tool-rocket::after {
+  content: "";
+  position: absolute;
+  right: 17px;
+  bottom: 9px;
+  width: 27px;
+  height: 48px;
+  border-radius: 999px 999px 8px 8px;
+  background:
+    radial-gradient(circle at 50% 34%, #7ce9ff 0 9%, #21466f 10% 16%, transparent 17%),
+    linear-gradient(180deg, #e64f43 0 22%, #f8fbff 23% 68%, #2f66d8 69% 82%, #ff8b2f 83% 100%);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.72),
+    0 0 18px rgba(255, 127, 58, 0.48);
+  clip-path: polygon(50% 0, 82% 20%, 82% 70%, 100% 84%, 64% 84%, 50% 100%, 36% 84%, 0 84%, 18% 70%, 18% 20%);
+  animation: rocketToolIgnition 520ms ease-in-out infinite alternate;
+}
+
 .power-tool-rainbowBucket {
   --tool-accent: #8958bf;
   padding-right: 58px;
@@ -1007,6 +1033,20 @@ h2 {
   }
   100% {
     transform: translateY(1px) rotate(9deg);
+  }
+}
+
+@keyframes rocketToolIgnition {
+  0% {
+    filter: brightness(0.92);
+    transform: translateY(2px) scale(0.96);
+  }
+  55% {
+    filter: brightness(1.34) saturate(1.24);
+  }
+  100% {
+    filter: brightness(1.68) saturate(1.42);
+    transform: translateY(-2px) scale(1.06);
   }
 }
 

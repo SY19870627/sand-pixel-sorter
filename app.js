@@ -38,6 +38,11 @@ const FIREWORK_BOMB_COUNT = 10;
 const FIREWORK_ERASE_RADIUS_CELLS = 9;
 const FIREWORK_LAUNCH_DELAY_MS = 220;
 const FIREWORK_END_DELAY_MS = 1200;
+const ROCKET_COUNTDOWN_TICK_MS = 560;
+const ROCKET_ASCENT_MS = 1380;
+const ROCKET_BURN_RADIUS_CELLS = 6;
+const ROCKET_BURN_SAMPLE_STEP_PX = 12;
+const ROCKET_EXIT_DELAY_MS = 520;
 const SANDWORM_TUNNEL_COUNT = 3;
 const SANDWORM_STEP_COUNT = 108;
 const SANDWORM_ERASE_RADIUS_CELLS = 5;
@@ -70,6 +75,13 @@ const POWER_TOOL_DEFINITIONS = [
     shortLabel: "煙火",
     valueLabel: "連發",
     initialUses: 2,
+  },
+  {
+    id: "rocket",
+    name: "中央火箭",
+    shortLabel: "火箭",
+    valueLabel: "燒穿",
+    initialUses: 1,
   },
   {
     id: "rainbowBucket",
@@ -186,6 +198,7 @@ let activeLevelId = null;
 let isLevelSwitching = false;
 let isLevelDeleting = false;
 let isFireworkShowRunning = false;
+let isRocketStrikeRunning = false;
 let isSandWormRunning = false;
 let apiServerReady = window.location.protocol === "file:" ? false : null;
 
@@ -1691,6 +1704,7 @@ function applyConvertedLevel(rows, paletteEntries) {
   gameState = new GameState(currentLevelRows);
   isAbsorptionLoopRunning = false;
   isFireworkShowRunning = false;
+  isRocketStrikeRunning = false;
   isSandWormRunning = false;
   document.body.classList.remove("is-fireworks-active");
   resetDeadlockWait();
@@ -2475,6 +2489,240 @@ class SandSorterScene extends Phaser.Scene {
     return removedCount;
   }
 
+  async playRocketStrike() {
+    document.body.classList.add("is-fireworks-active");
+    this.cameras.main.setBackgroundColor("#03040d");
+
+    const nightOverlay = this.add.rectangle(
+      this.canvasWidth / 2,
+      this.canvasHeight / 2,
+      this.canvasWidth,
+      this.canvasHeight,
+      0x01020a,
+      0.56
+    );
+    nightOverlay.setDepth(720);
+
+    const launchX = this.boardX + this.boardSize / 2;
+    const hiddenY = this.beltCenterY + this.beltHeight / 2 + 156;
+    const stagingY = this.beltCenterY + this.beltHeight / 2 + 62;
+    const exitY = this.boardY - 240;
+    const rocket = this.createRocketStrikeVisual(launchX, hiddenY);
+    const countdownText = this.add.text(launchX, stagingY - 106, "", {
+      fontFamily: "\"Noto Sans TC\", \"Microsoft JhengHei\", sans-serif",
+      fontSize: "58px",
+      fontStyle: "bold",
+      color: "#fff6cf",
+      stroke: "#1b1e36",
+      strokeThickness: 8,
+    });
+    countdownText.setOrigin(0.5);
+    countdownText.setDepth(965);
+
+    const launchBeam = this.add.graphics();
+    launchBeam.setDepth(925);
+    let removedCount = 0;
+    let previousBurnY = stagingY;
+
+    try {
+      await tweenTo(this, rocket, {
+        y: stagingY,
+        duration: 520,
+        ease: "Back.easeOut",
+      });
+
+      for (let count = 3; count >= 1; count -= 1) {
+        countdownText.setText(`${count}`);
+        countdownText.setAlpha(1);
+        countdownText.setScale(0.55);
+        this.cameras.main.shake(80, 0.002);
+        this.tweens.add({
+          targets: countdownText,
+          scale: 1.32,
+          alpha: 0.08,
+          duration: ROCKET_COUNTDOWN_TICK_MS - 70,
+          ease: "Cubic.easeOut",
+        });
+        await sleep(ROCKET_COUNTDOWN_TICK_MS);
+      }
+
+      countdownText.setText("發射");
+      countdownText.setAlpha(1);
+      countdownText.setScale(0.72);
+      this.tweens.add({
+        targets: countdownText,
+        scale: 1.18,
+        alpha: 0,
+        duration: 360,
+        ease: "Cubic.easeOut",
+      });
+      this.cameras.main.shake(160, 0.005);
+      await sleep(220);
+
+      await tweenTo(this, rocket, {
+        y: exitY,
+        scale: 0.42,
+        duration: ROCKET_ASCENT_MS,
+        ease: "Cubic.easeIn",
+        onUpdate: () => {
+          removedCount += this.burnRocketPassage(launchX, previousBurnY, rocket.y);
+          previousBurnY = rocket.y;
+          this.spawnRocketExhaust(rocket.x, rocket.y + 42);
+          launchBeam.clear();
+          launchBeam.lineStyle(12, 0xff9d36, 0.24);
+          launchBeam.lineBetween(launchX, Math.min(stagingY + 44, this.boardY + this.boardSize), rocket.x, rocket.y + 40);
+          launchBeam.lineStyle(5, 0xffef9d, 0.46);
+          launchBeam.lineBetween(launchX, Math.min(stagingY + 28, this.boardY + this.boardSize), rocket.x, rocket.y + 22);
+          launchBeam.lineStyle(2, 0xffffff, 0.62);
+          launchBeam.lineBetween(launchX, Math.min(stagingY + 16, this.boardY + this.boardSize), rocket.x, rocket.y + 12);
+        },
+      });
+
+      rocket.destroy();
+      launchBeam.destroy();
+      await sleep(ROCKET_EXIT_DELAY_MS);
+      return removedCount;
+    } finally {
+      if (rocket.active) {
+        rocket.destroy();
+      }
+      if (countdownText.active) {
+        countdownText.destroy();
+      }
+      if (launchBeam.active) {
+        launchBeam.destroy();
+      }
+      nightOverlay.destroy();
+      this.cameras.main.setBackgroundColor("#f5e7bf");
+      document.body.classList.remove("is-fireworks-active");
+    }
+  }
+
+  createRocketStrikeVisual(x, y) {
+    const exhaustGlow = this.add.circle(0, 49, 16, 0xffb84a, 0.3);
+    const flameOuter = this.add.triangle(0, 54, -12, 0, 12, 0, 0, 36, 0xff7a1a, 0.92);
+    const flameInner = this.add.triangle(0, 49, -7, 0, 7, 0, 0, 25, 0xfff4a5, 0.98);
+    const leftFin = this.add.triangle(-16, 28, 0, -14, -12, 16, 0, 20, 0x2f66d8, 1);
+    const rightFin = this.add.triangle(16, 28, 0, -14, 12, 16, 0, 20, 0x2f66d8, 1);
+    const body = this.add.rectangle(0, 0, 30, 78, 0xf9fbff, 1);
+    const nose = this.add.triangle(0, -53, -16, 0, 16, 0, 0, -28, 0xe64f43, 1);
+    const windowFrame = this.add.circle(0, -20, 10, 0x234a7f, 1);
+    const windowGlass = this.add.circle(0, -20, 6, 0x8ee8ff, 1);
+    const stripe = this.add.rectangle(0, 10, 30, 8, 0xffd166, 1);
+
+    body.setStrokeStyle(3, 0x334a6f, 1);
+    nose.setStrokeStyle(2, 0x95342d, 0.9);
+    windowFrame.setStrokeStyle(2, 0xffffff, 0.78);
+    stripe.setStrokeStyle(1, 0xc89122, 0.8);
+
+    const rocket = this.add.container(x, y, [
+      exhaustGlow,
+      flameOuter,
+      flameInner,
+      leftFin,
+      rightFin,
+      body,
+      stripe,
+      nose,
+      windowFrame,
+      windowGlass,
+    ]);
+    rocket.setDepth(950);
+    rocket.setScale(0.92);
+
+    this.tweens.add({
+      targets: [exhaustGlow, flameOuter, flameInner],
+      scaleX: 0.72,
+      scaleY: 1.38,
+      alpha: 0.56,
+      yoyo: true,
+      repeat: -1,
+      duration: 76,
+      ease: "Sine.easeInOut",
+    });
+
+    this.tweens.add({
+      targets: rocket,
+      angle: 2,
+      yoyo: true,
+      repeat: -1,
+      duration: 92,
+      ease: "Sine.easeInOut",
+    });
+
+    return rocket;
+  }
+
+  spawnRocketExhaust(x, y) {
+    const color = [0xfff1a8, 0xff8b2f, 0xffffff, 0x8fd7ff][Phaser.Math.Between(0, 3)];
+    const particle = this.add.circle(
+      x + Phaser.Math.Between(-16, 16),
+      y + Phaser.Math.Between(2, 22),
+      Phaser.Math.Between(3, 7),
+      color,
+      Phaser.Math.FloatBetween(0.48, 0.82)
+    );
+    particle.setDepth(930);
+    this.tweens.add({
+      targets: particle,
+      x: particle.x + Phaser.Math.Between(-28, 28),
+      y: particle.y + Phaser.Math.Between(18, 44),
+      alpha: 0,
+      scale: Phaser.Math.FloatBetween(1.8, 3.2),
+      duration: Phaser.Math.Between(320, 560),
+      ease: "Quad.easeOut",
+      onComplete: () => particle.destroy(),
+    });
+  }
+
+  burnRocketPassage(worldX, fromWorldY, toWorldY) {
+    const minWorldY = Math.min(fromWorldY, toWorldY);
+    const maxWorldY = Math.max(fromWorldY, toWorldY);
+    let removedCount = 0;
+
+    for (let worldY = minWorldY; worldY <= maxWorldY; worldY += ROCKET_BURN_SAMPLE_STEP_PX) {
+      if (!this.isInsideBoard(worldX, worldY)) {
+        continue;
+      }
+
+      const cellX = this.worldXToCellX(worldX);
+      const cellY = this.worldYToCellY(worldY);
+      removedCount += gameState.field.eraseCircle(cellX, cellY, ROCKET_BURN_RADIUS_CELLS);
+
+      if (Math.random() < 0.55) {
+        this.spawnRocketBurnSpark(worldX, worldY);
+      }
+    }
+
+    if (removedCount > 0) {
+      this.renderDirtySand();
+      this.cameras.main.shake(34, 0.0018);
+    }
+
+    return removedCount;
+  }
+
+  spawnRocketBurnSpark(worldX, worldY) {
+    const spark = this.add.circle(
+      worldX + Phaser.Math.Between(-24, 24),
+      worldY + Phaser.Math.Between(-8, 12),
+      Phaser.Math.Between(2, 5),
+      [0xfff1a8, 0xff8b2f, 0xff4f2f, 0xffffff][Phaser.Math.Between(0, 3)],
+      Phaser.Math.FloatBetween(0.56, 0.9)
+    );
+    spark.setDepth(946);
+    this.tweens.add({
+      targets: spark,
+      x: spark.x + Phaser.Math.Between(-28, 28),
+      y: spark.y + Phaser.Math.Between(-34, 10),
+      alpha: 0,
+      scale: Phaser.Math.FloatBetween(0.2, 0.46),
+      duration: Phaser.Math.Between(260, 520),
+      ease: "Quad.easeOut",
+      onComplete: () => spark.destroy(),
+    });
+  }
+
   async playSandWormFeast() {
     let removedTotal = 0;
     for (let tunnelIndex = 0; tunnelIndex < SANDWORM_TUNNEL_COUNT; tunnelIndex += 1) {
@@ -2979,19 +3227,23 @@ function updatePowerToolState() {
 
   const isRunning = gameState.phase === "running";
   const hasSand = gameState.field.remainingTotal > 0;
+  const isNightShowRunning = isFireworkShowRunning || isRocketStrikeRunning;
+  const isMajorEffectRunning = isNightShowRunning || isSandWormRunning;
   powerToolButtons.forEach((button, toolId) => {
     const uses = powerToolUses(toolId);
     const isTargeting = gameState.powerTools.activeTargetTool === toolId;
     const cannotUseRainbow = toolId === "rainbowBucket" && gameState.conveyor.isFull();
     const cannotArmPowerBucket = toolId === "suctionBoost" && gameState.conveyor.isFull();
-    const cannotUseBomb = toolId === "bomb" && isFireworkShowRunning;
-    const cannotUseSandWorm = toolId === "sandquake" && isSandWormRunning;
+    const cannotUseBomb = toolId === "bomb" && isMajorEffectRunning;
+    const cannotUseRocket = toolId === "rocket" && isMajorEffectRunning;
+    const cannotUseSandWorm = toolId === "sandquake" && isMajorEffectRunning;
     button.disabled = !isRunning
       || !hasSand
       || uses <= 0
       || cannotUseRainbow
       || cannotArmPowerBucket
       || cannotUseBomb
+      || cannotUseRocket
       || cannotUseSandWorm;
     button.classList.toggle("is-active", isTargeting);
     button.querySelector(".power-tool-count").textContent = `${uses}`;
@@ -3003,6 +3255,8 @@ function updatePowerToolState() {
 
   if (isFireworkShowRunning) {
     elements.powerStatus.textContent = "煙火施放中，爆炸會清除沙子。";
+  } else if (isRocketStrikeRunning) {
+    elements.powerStatus.textContent = "火箭倒數發射中，升空路徑會燒穿沙畫。";
   } else if (isSandWormRunning) {
     elements.powerStatus.textContent = "沙蟲正在鑽進沙畫並吃掉沙子。";
   } else if (gameState.powerTools.activeTargetTool === "suctionBoost") {
@@ -3205,7 +3459,7 @@ function handlePowerToolClick(toolId) {
   }
 
   if (toolId === "bomb") {
-    if (isFireworkShowRunning || !consumePowerToolUse("bomb")) {
+    if (isFireworkShowRunning || isRocketStrikeRunning || isSandWormRunning || !consumePowerToolUse("bomb")) {
       return;
     }
 
@@ -3228,6 +3482,36 @@ function handlePowerToolClick(toolId) {
       })
       .finally(() => {
         isFireworkShowRunning = false;
+        document.body.classList.remove("is-fireworks-active");
+        renderUI();
+      });
+    return;
+  }
+
+  if (toolId === "rocket") {
+    if (isFireworkShowRunning || isRocketStrikeRunning || isSandWormRunning || !consumePowerToolUse("rocket")) {
+      return;
+    }
+
+    resetDeadlockWait();
+    isRocketStrikeRunning = true;
+    setMessage("中央火箭倒數準備發射，會筆直燒穿沙畫。");
+    addLog("中央火箭倒數準備發射。", "yellow");
+    renderUI({ updateSlots: false });
+    const rocketPromise = sceneRef?.playRocketStrike() ?? Promise.resolve(0);
+    void rocketPromise
+      .then((removedCount = 0) => {
+        if (removedCount > 0) {
+          setMessage(`中央火箭燒掉 ${removedCount} 顆沙子。`);
+          addLog(`中央火箭燒掉 ${removedCount} 顆沙子。`, "yellow");
+        } else {
+          setMessage("中央火箭沒有燒到沙子。");
+        }
+        updateEndState();
+        startAbsorptionLoop();
+      })
+      .finally(() => {
+        isRocketStrikeRunning = false;
         document.body.classList.remove("is-fireworks-active");
         renderUI();
       });
@@ -3260,15 +3544,15 @@ function handlePowerToolClick(toolId) {
     return;
   }
 
+  if (toolId === "sandquake" && (isFireworkShowRunning || isRocketStrikeRunning || isSandWormRunning)) {
+    return;
+  }
+
   if (!consumePowerToolUse(toolId)) {
     return;
   }
 
   if (toolId === "sandquake") {
-    if (isSandWormRunning) {
-      return;
-    }
-
     resetDeadlockWait();
     isSandWormRunning = true;
     setMessage("沙蟲鑽入沙畫，開始吞食沙子。");
@@ -3493,6 +3777,7 @@ function resetGame() {
   gameState = new GameState(currentLevelRows);
   isAbsorptionLoopRunning = false;
   isFireworkShowRunning = false;
+  isRocketStrikeRunning = false;
   isSandWormRunning = false;
   document.body.classList.remove("is-fireworks-active");
   resetDeadlockWait();
