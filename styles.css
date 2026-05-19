@@ -51,6 +51,7 @@ body.is-fireworks-active .side-panel {
 }
 
 body.is-fireworks-active .remaining-chip,
+body.is-fireworks-active .money-chip,
 body.is-fireworks-active .upload-button,
 body.is-fireworks-active .palette-select,
 body.is-fireworks-active .reset-button {
@@ -83,9 +84,9 @@ button {
   gap: 10px;
 }
 
-.remaining-chip {
+.remaining-chip,
+.money-chip {
   display: grid;
-  min-width: 220px;
   min-height: 48px;
   align-content: center;
   border: 1px solid var(--line);
@@ -94,17 +95,31 @@ button {
   background: #ffffff;
 }
 
-.remaining-chip span {
+.remaining-chip {
+  min-width: 220px;
+}
+
+.money-chip {
+  min-width: 96px;
+}
+
+.remaining-chip span,
+.money-chip span {
   color: var(--muted);
   font-size: 11px;
   font-weight: 800;
   line-height: 1;
 }
 
-.remaining-chip strong {
+.remaining-chip strong,
+.money-chip strong {
   color: var(--ink);
   font-size: 18px;
   line-height: 1.15;
+}
+
+.money-chip strong {
+  color: #9a6a1e;
 }
 
 .remaining-colors {
@@ -1094,7 +1109,8 @@ h2 {
   .upload-controls,
   .upload-button,
   .palette-select,
-  .remaining-chip {
+  .remaining-chip,
+  .money-chip {
     width: 100%;
   }
 

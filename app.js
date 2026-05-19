@@ -1,4 +1,5 @@
 const SAND_UNIT_VALUE = 1;
+const FULL_BUCKET_REWARD_MONEY = 10;
 const BUCKET_CAPACITY = 300;
 const SLOT_COUNT = 5;
 const SOURCE_IMAGE_SIZE = 128;
@@ -171,6 +172,7 @@ const elements = {
   phasePill: document.querySelector("#phasePill"),
   remainingValue: document.querySelector("#remainingValue"),
   remainingByColor: document.querySelector("#remainingByColor"),
+  moneyValue: document.querySelector("#moneyValue"),
   turnValue: document.querySelector("#turnValue"),
   availableColors: document.querySelector("#availableColors"),
   powerPalette: document.querySelector("#powerPalette"),
@@ -1243,6 +1245,7 @@ class GameState {
     this.powerTools = createPowerToolState();
     this.phase = "running";
     this.turn = 0;
+    this.money = 0;
   }
 
   placeBucket(color, preferredSlotIndex = null, options = {}) {
@@ -1263,6 +1266,16 @@ class GameState {
     if (this.isDeadlocked(hasAnyBucketAbsorbable)) {
       this.phase = "lost";
     }
+  }
+
+  awardFullBucketRewards(bucketCount) {
+    if (bucketCount <= 0) {
+      return 0;
+    }
+
+    const reward = bucketCount * FULL_BUCKET_REWARD_MONEY;
+    this.money += reward;
+    return reward;
   }
 
   isDeadlocked(hasAnyBucketAbsorbable = false) {
@@ -3367,6 +3380,7 @@ function renderRemainingByColor() {
 
 function renderUI({ updateSlots = true } = {}) {
   elements.remainingValue.textContent = gameState.field.remainingTotal;
+  elements.moneyValue.textContent = `$${gameState.money}`;
   elements.turnValue.textContent = gameState.turn;
   renderPhase();
   renderCompletionOverlay();
@@ -3754,9 +3768,10 @@ async function resolveAbsorption() {
     await playFullBucketFeedbackBeforeRemoval();
     const removedBuckets = gameState.conveyor.removeFullBuckets();
     if (removedBuckets.length > 0) {
+      const reward = gameState.awardFullBucketRewards(removedBuckets.length);
       const removedText = removedBuckets.map((bucket) => `${colorLabel(bucket.color)}桶`).join("、");
-      setMessage(`${removedText} 已滿，離開輸送帶。`);
-      removedBuckets.forEach((bucket) => addLog(`${colorLabel(bucket.color)}桶滿桶消除。`, bucket.color));
+      setMessage(`${removedText} 已滿，獲得 $${reward}。`);
+      removedBuckets.forEach((bucket) => addLog(`${colorLabel(bucket.color)}桶滿桶消除，+$${FULL_BUCKET_REWARD_MONEY}。`, bucket.color));
       renderUI();
       await sleep(BUCKET_REMOVE_DELAY_MS);
     }
