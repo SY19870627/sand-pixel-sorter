@@ -845,7 +845,29 @@ h2 {
 }
 
 .power-tool-sandquake {
-  --tool-accent: #7b4a32;
+  --tool-accent: #8f6845;
+  padding-right: 54px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(241, 212, 149, 0.32)),
+    var(--panel);
+}
+
+.power-tool-sandquake::after {
+  content: "";
+  position: absolute;
+  right: 12px;
+  bottom: 13px;
+  width: 38px;
+  height: 26px;
+  border-radius: 999px 999px 12px 12px;
+  background:
+    radial-gradient(circle at 30% 36%, #21100a 0 5%, transparent 6%),
+    radial-gradient(circle at 64% 36%, #21100a 0 5%, transparent 6%),
+    linear-gradient(90deg, #c67a3e 0 28%, #9d5d32 28% 50%, #c67a3e 50% 72%, #8f4b28 72%);
+  box-shadow:
+    inset 0 -6px 0 rgba(74, 40, 24, 0.22),
+    0 5px 10px rgba(58, 47, 38, 0.18);
+  animation: sandWormWiggle 620ms ease-in-out infinite alternate;
 }
 
 .power-status {
@@ -973,6 +995,18 @@ h2 {
   100% {
     filter: brightness(1.8) saturate(1.9);
     transform: scale(1.08) rotate(5deg);
+  }
+}
+
+@keyframes sandWormWiggle {
+  0% {
+    transform: translateY(2px) rotate(-7deg);
+  }
+  50% {
+    transform: translateY(-2px) rotate(5deg);
+  }
+  100% {
+    transform: translateY(1px) rotate(9deg);
   }
 }
 

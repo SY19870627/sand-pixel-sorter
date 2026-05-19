@@ -38,7 +38,11 @@ const FIREWORK_BOMB_COUNT = 10;
 const FIREWORK_ERASE_RADIUS_CELLS = 9;
 const FIREWORK_LAUNCH_DELAY_MS = 220;
 const FIREWORK_END_DELAY_MS = 1200;
-const SANDQUAKE_STEP_COUNT = 6;
+const SANDWORM_TUNNEL_COUNT = 3;
+const SANDWORM_STEP_COUNT = 108;
+const SANDWORM_ERASE_RADIUS_CELLS = 5;
+const SANDWORM_FRAME_DELAY_MS = 34;
+const SANDWORM_SEGMENT_COUNT = 9;
 const STREAM_SUCK_INTERVAL_MS = 4;
 const IDLE_SCAN_INTERVAL_MS = 24;
 const SLOT_UI_REFRESH_MS = 80;
@@ -76,9 +80,9 @@ const POWER_TOOL_DEFINITIONS = [
   },
   {
     id: "sandquake",
-    name: "沙瀑震動",
-    shortLabel: "震動",
-    valueLabel: "全場",
+    name: "沙蟲",
+    shortLabel: "沙蟲",
+    valueLabel: "吞食",
     initialUses: 2,
   },
 ];
@@ -182,6 +186,7 @@ let activeLevelId = null;
 let isLevelSwitching = false;
 let isLevelDeleting = false;
 let isFireworkShowRunning = false;
+let isSandWormRunning = false;
 let apiServerReady = window.location.protocol === "file:" ? false : null;
 
 function createFilledPainting(size, color) {
@@ -1686,6 +1691,7 @@ function applyConvertedLevel(rows, paletteEntries) {
   gameState = new GameState(currentLevelRows);
   isAbsorptionLoopRunning = false;
   isFireworkShowRunning = false;
+  isSandWormRunning = false;
   document.body.classList.remove("is-fireworks-active");
   resetDeadlockWait();
   lastSlotUiRefreshAt = 0;
@@ -2469,14 +2475,187 @@ class SandSorterScene extends Phaser.Scene {
     return removedCount;
   }
 
-  applySandquake() {
-    gameState.field.wakeArea(0, 0, gameState.field.width - 1, gameState.field.height - 1);
-    for (let index = 0; index < SANDQUAKE_STEP_COUNT; index += 1) {
-      gameState.field.stepActiveSand();
+  async playSandWormFeast() {
+    let removedTotal = 0;
+    for (let tunnelIndex = 0; tunnelIndex < SANDWORM_TUNNEL_COUNT; tunnelIndex += 1) {
+      removedTotal += await this.runSandWormTunnel(tunnelIndex);
+      await sleep(120);
     }
-    gameState.field.wakeArea(0, 0, gameState.field.width - 1, gameState.field.height - 1);
+    return removedTotal;
+  }
+
+  async runSandWormTunnel(tunnelIndex) {
+    const path = this.createSandWormPath(tunnelIndex);
+    const worm = this.createSandWormVisual(path.start);
+    const trailPositions = [];
+    let removedCount = 0;
+    let previousPosition = path.start;
+
+    this.cameras.main.shake(120, 0.0026);
+
+    for (let step = 0; step <= SANDWORM_STEP_COUNT; step += 1) {
+      const t = step / SANDWORM_STEP_COUNT;
+      const position = this.sampleCubicPath(path, t);
+      const angle = Phaser.Math.Angle.Between(previousPosition.x, previousPosition.y, position.x, position.y);
+      trailPositions.unshift({ ...position });
+      if (trailPositions.length > SANDWORM_SEGMENT_COUNT * 5) {
+        trailPositions.length = SANDWORM_SEGMENT_COUNT * 5;
+      }
+
+      this.updateSandWormVisual(worm, trailPositions, position, angle);
+
+      if (this.isInsideBoard(position.x, position.y)) {
+        const cellX = this.worldXToCellX(position.x);
+        const cellY = this.worldYToCellY(position.y);
+        removedCount += gameState.field.eraseCircle(cellX, cellY, SANDWORM_ERASE_RADIUS_CELLS);
+        this.spawnSandWormCrumbs(position);
+        if (step % 2 === 0) {
+          this.renderDirtySand();
+        }
+      }
+
+      previousPosition = position;
+      await sleep(SANDWORM_FRAME_DELAY_MS);
+    }
+
     this.renderDirtySand();
-    this.cameras.main.shake(280, 0.006);
+    this.destroySandWormVisual(worm);
+    return removedCount;
+  }
+
+  createSandWormPath(tunnelIndex) {
+    const startX = Phaser.Math.Between(this.boardX + 78, this.boardX + this.boardSize - 78);
+    const endX = Phaser.Math.Between(this.boardX + 72, this.boardX + this.boardSize - 72);
+    const sideSwing = tunnelIndex % 2 === 0 ? -1 : 1;
+    return {
+      start: {
+        x: startX,
+        y: this.boardY + this.boardSize - 14,
+      },
+      controlA: {
+        x: Phaser.Math.Clamp(startX + sideSwing * Phaser.Math.Between(88, 150), this.boardX + 46, this.boardX + this.boardSize - 46),
+        y: this.boardY + this.boardSize * Phaser.Math.FloatBetween(0.78, 0.9),
+      },
+      controlB: {
+        x: Phaser.Math.Between(this.boardX + 54, this.boardX + this.boardSize - 54),
+        y: this.boardY + this.boardSize * Phaser.Math.FloatBetween(0.38, 0.58),
+      },
+      end: {
+        x: endX,
+        y: this.boardY + Phaser.Math.Between(70, 150),
+      },
+    };
+  }
+
+  sampleCubicPath(path, t) {
+    const inverse = 1 - t;
+    const a = inverse * inverse * inverse;
+    const b = 3 * inverse * inverse * t;
+    const c = 3 * inverse * t * t;
+    const d = t * t * t;
+    return {
+      x: path.start.x * a + path.controlA.x * b + path.controlB.x * c + path.end.x * d,
+      y: path.start.y * a + path.controlA.y * b + path.controlB.y * c + path.end.y * d,
+    };
+  }
+
+  createSandWormVisual(startPosition) {
+    const bodySegments = Array.from({ length: SANDWORM_SEGMENT_COUNT }, (_, index) => {
+      const segment = this.add.ellipse(
+        startPosition.x,
+        startPosition.y + index * 9,
+        48 - index * 2.1,
+        32 - index * 1.2,
+        index % 2 === 0 ? 0xd58b46 : 0x8f4b28,
+        1
+      );
+      segment.setStrokeStyle(3, index % 2 === 0 ? 0xffd99a : 0x4a2818, 0.72);
+      segment.setDepth(930 - index);
+      return segment;
+    });
+
+    const head = this.add.container(startPosition.x, startPosition.y);
+    head.setDepth(950);
+    const glow = this.add.ellipse(0, 0, 68, 52, 0xffd166, 0.2);
+    const headBody = this.add.ellipse(0, 0, 58, 44, 0xd9853d, 1);
+    headBody.setStrokeStyle(4, 0xffe1a8, 0.92);
+    const mouth = this.add.graphics();
+    mouth.fillStyle(0x2c140c, 1);
+    mouth.fillTriangle(-17, -6, 17, -6, 0, 18);
+    mouth.fillStyle(0xffe7b8, 1);
+    mouth.fillTriangle(-13, -5, -5, -5, -9, 6);
+    mouth.fillTriangle(5, -5, 13, -5, 9, 6);
+    mouth.fillTriangle(-2, -5, 2, -5, 0, 9);
+    const leftEye = this.add.circle(-15, -13, 4, 0x160b07, 1);
+    const rightEye = this.add.circle(15, -13, 4, 0x160b07, 1);
+    const leftEyeSpark = this.add.circle(-16, -14, 1.4, 0xffffff, 1);
+    const rightEyeSpark = this.add.circle(14, -14, 1.4, 0xffffff, 1);
+    const antennaA = this.add.rectangle(-23, -27, 5, 21, 0x7b3f22, 1);
+    const antennaB = this.add.rectangle(23, -27, 5, 21, 0x7b3f22, 1);
+    antennaA.setAngle(-28);
+    antennaB.setAngle(28);
+    head.add([glow, antennaA, antennaB, headBody, mouth, leftEye, rightEye, leftEyeSpark, rightEyeSpark]);
+
+    this.tweens.add({
+      targets: glow,
+      alpha: 0.48,
+      scale: 1.18,
+      yoyo: true,
+      repeat: -1,
+      duration: 180,
+      ease: "Sine.easeInOut",
+    });
+
+    return { head, bodySegments };
+  }
+
+  updateSandWormVisual(worm, trailPositions, headPosition, angle) {
+    worm.head.setPosition(headPosition.x, headPosition.y);
+    worm.head.setRotation(angle + Math.PI / 2);
+    worm.bodySegments.forEach((segment, index) => {
+      const trail = trailPositions[Math.min(trailPositions.length - 1, index * 4)] ?? headPosition;
+      const nextTrail = trailPositions[Math.min(trailPositions.length - 1, index * 4 + 1)] ?? trail;
+      const segmentAngle = Phaser.Math.Angle.Between(nextTrail.x, nextTrail.y, trail.x, trail.y);
+      segment.setPosition(trail.x, trail.y);
+      segment.setRotation(segmentAngle);
+      segment.setAlpha(Phaser.Math.Clamp(1 - index * 0.055, 0.45, 1));
+    });
+  }
+
+  spawnSandWormCrumbs(position) {
+    const crumbColors = [0xc89b60, 0x8f6845, 0xf1d495, 0x7b4a32];
+    for (let index = 0; index < 10; index += 1) {
+      const crumb = this.add.circle(
+        position.x + Phaser.Math.Between(-12, 12),
+        position.y + Phaser.Math.Between(-10, 10),
+        Phaser.Math.Between(2, 4),
+        crumbColors[Phaser.Math.Between(0, crumbColors.length - 1)],
+        0.92
+      );
+      crumb.setDepth(940);
+      this.tweens.add({
+        targets: crumb,
+        x: crumb.x + Phaser.Math.Between(-28, 28),
+        y: crumb.y + Phaser.Math.Between(-18, 28),
+        alpha: 0,
+        scale: 0.2,
+        duration: 340,
+        ease: "Quad.easeOut",
+        onComplete: () => crumb.destroy(),
+      });
+    }
+  }
+
+  destroySandWormVisual(worm) {
+    const targets = [worm.head, ...worm.bodySegments];
+    this.tweens.add({
+      targets,
+      alpha: 0,
+      scale: 0.35,
+      duration: 220,
+      ease: "Quad.easeOut",
+      onComplete: () => targets.forEach((target) => target.destroy()),
+    });
   }
 
   getBucketLineRange(slotIndex) {
@@ -2806,7 +2985,14 @@ function updatePowerToolState() {
     const cannotUseRainbow = toolId === "rainbowBucket" && gameState.conveyor.isFull();
     const cannotArmPowerBucket = toolId === "suctionBoost" && gameState.conveyor.isFull();
     const cannotUseBomb = toolId === "bomb" && isFireworkShowRunning;
-    button.disabled = !isRunning || !hasSand || uses <= 0 || cannotUseRainbow || cannotArmPowerBucket || cannotUseBomb;
+    const cannotUseSandWorm = toolId === "sandquake" && isSandWormRunning;
+    button.disabled = !isRunning
+      || !hasSand
+      || uses <= 0
+      || cannotUseRainbow
+      || cannotArmPowerBucket
+      || cannotUseBomb
+      || cannotUseSandWorm;
     button.classList.toggle("is-active", isTargeting);
     button.querySelector(".power-tool-count").textContent = `${uses}`;
   });
@@ -2817,6 +3003,8 @@ function updatePowerToolState() {
 
   if (isFireworkShowRunning) {
     elements.powerStatus.textContent = "煙火施放中，爆炸會清除沙子。";
+  } else if (isSandWormRunning) {
+    elements.powerStatus.textContent = "沙蟲正在鑽進沙畫並吃掉沙子。";
   } else if (gameState.powerTools.activeTargetTool === "suctionBoost") {
     elements.powerStatus.textContent = "吸力模式：下一個水桶容量 900，吸底部 9 排。";
   } else {
@@ -3077,12 +3265,31 @@ function handlePowerToolClick(toolId) {
   }
 
   if (toolId === "sandquake") {
+    if (isSandWormRunning) {
+      return;
+    }
+
     resetDeadlockWait();
-    sceneRef?.applySandquake();
-    setMessage("沙瀑震動啟動，整張沙畫開始鬆動。");
-    addLog("沙瀑震動啟動。", "yellow");
-    renderUI();
-    startAbsorptionLoop();
+    isSandWormRunning = true;
+    setMessage("沙蟲鑽入沙畫，開始吞食沙子。");
+    addLog("沙蟲鑽入沙畫。", "yellow");
+    renderUI({ updateSlots: false });
+    const wormPromise = sceneRef?.playSandWormFeast() ?? Promise.resolve(0);
+    void wormPromise
+      .then((removedCount = 0) => {
+        if (removedCount > 0) {
+          setMessage(`沙蟲吃掉 ${removedCount} 顆沙子。`);
+          addLog(`沙蟲吃掉 ${removedCount} 顆沙子。`, "yellow");
+        } else {
+          setMessage("沙蟲沒有吃到沙子。");
+        }
+        updateEndState();
+        startAbsorptionLoop();
+      })
+      .finally(() => {
+        isSandWormRunning = false;
+        renderUI();
+      });
   }
 }
 
@@ -3286,6 +3493,7 @@ function resetGame() {
   gameState = new GameState(currentLevelRows);
   isAbsorptionLoopRunning = false;
   isFireworkShowRunning = false;
+  isSandWormRunning = false;
   document.body.classList.remove("is-fireworks-active");
   resetDeadlockWait();
   lastSlotUiRefreshAt = 0;
