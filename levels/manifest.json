@@ -16,6 +16,31 @@
       "src": "gem.png"
     },
     {
+      "id": "robot",
+      "title": "Robot",
+      "src": "robot.png"
+    },
+    {
+      "id": "castle",
+      "title": "Castle",
+      "src": "castle.png"
+    },
+    {
+      "id": "cactus",
+      "title": "Cactus",
+      "src": "cactus.png"
+    },
+    {
+      "id": "spaceship",
+      "title": "Spaceship",
+      "src": "spaceship.png"
+    },
+    {
+      "id": "flower",
+      "title": "Flower",
+      "src": "flower.png"
+    },
+    {
       "id": "upload-1778975324057-f142f945",
       "title": "sticker",
       "src": "uploads/sticker-1778975324057.png"
