@@ -1,0 +1,435 @@
+/* ============================================================
+   手機版面與全螢幕（mobile.css）
+   - 載入在 styles.css 之後，只在小螢幕覆寫版面，桌機外觀不變
+   - 目標：手機上整個遊戲在一個畫面內，不需要上下捲動
+   ============================================================ */
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+button,
+select,
+label,
+.level-thumb {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.game-canvas canvas {
+  touch-action: none;
+}
+
+/* 新增的小工具按鈕（全螢幕、更多選單），桌機也顯示全螢幕按鈕 */
+.tool-icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 48px;
+  min-height: 48px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: #ffffff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tool-icon-button svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tool-icon-button[hidden],
+.menu-toggle {
+  display: none;
+}
+
+body.is-fireworks-active .tool-icon-button {
+  border-color: rgba(132, 159, 255, 0.32);
+  color: #f8fbff;
+  background: rgba(10, 14, 31, 0.86);
+}
+
+/* 桌機：多了全螢幕按鈕後，避免頂列按鈕文字被擠成兩行 */
+.topbar h1,
+.upload-button,
+.reset-button,
+.gravity-button,
+.speed-button {
+  white-space: nowrap;
+}
+
+.topbar-actions .fullscreen-button {
+  flex: 0 0 auto;
+}
+
+/* 全螢幕時拿掉外框留白，讓遊戲吃滿螢幕 */
+:fullscreen body,
+body.is-fullscreen {
+  overflow: auto;
+}
+
+/* ============================================================
+   手機／平板共用（寬度 ≤ 1100，或橫向高度 ≤ 560）
+   ============================================================ */
+@media (max-width: 1100px), (max-height: 560px) and (orientation: landscape) {
+  html,
+  body {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  body {
+    min-height: 0;
+  }
+
+  .app-shell {
+    display: grid;
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    margin: 0;
+    padding:
+      max(6px, env(safe-area-inset-top))
+      max(6px, env(safe-area-inset-right))
+      max(6px, env(safe-area-inset-bottom))
+      max(6px, env(safe-area-inset-left));
+    gap: 6px;
+    overflow: hidden;
+  }
+
+  /* 把 main 拆平，讓頂列、遊戲區、控制區直接參與外層 grid */
+  .game-layout {
+    display: contents;
+  }
+
+  /* ---------- 頂列 ---------- */
+  .topbar {
+    grid-area: top;
+    display: block;
+    margin: 0;
+    min-width: 0;
+  }
+
+  .topbar > div:first-child {
+    display: none; /* 隱藏 Prototype / 大標題，省空間 */
+  }
+
+  .topbar-actions {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) 44px;
+    grid-template-areas:
+      "remain remain money full"
+      "grav   speed  reset menu";
+    gap: 6px;
+    width: 100% !important;
+  }
+
+  .remaining-chip {
+    grid-area: remain;
+    min-width: 0;
+    width: auto !important;
+    min-height: 44px;
+    padding: 4px 8px;
+  }
+
+  .remaining-chip span {
+    font-size: 10px;
+  }
+
+  .remaining-chip strong {
+    font-size: 15px;
+  }
+
+  .remaining-colors {
+    display: flex;
+    gap: 2px 8px;
+    margin-top: 2px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .remaining-colors::-webkit-scrollbar {
+    display: none;
+  }
+
+  .remaining-color {
+    flex: 0 0 auto;
+    font-size: 10px;
+  }
+
+  .money-chip {
+    grid-area: money;
+    min-width: 64px;
+    width: auto !important;
+    min-height: 44px;
+    padding: 4px 8px;
+  }
+
+  .money-chip span {
+    font-size: 10px;
+  }
+
+  .money-chip strong {
+    font-size: 15px;
+  }
+
+  .fullscreen-button {
+    grid-area: full;
+    width: 44px;
+    min-height: 44px;
+  }
+
+  .menu-toggle {
+    grid-area: menu;
+    display: inline-grid;
+    width: 44px;
+    min-height: 38px;
+  }
+
+  .gravity-button {
+    grid-area: grav;
+  }
+
+  .speed-button {
+    grid-area: speed;
+  }
+
+  .reset-button {
+    grid-area: reset;
+  }
+
+  .gravity-button,
+  .speed-button,
+  .reset-button {
+    width: auto !important;
+    min-width: 0;
+    min-height: 38px;
+    padding: 0 10px;
+    font-size: 14px;
+  }
+
+  /* 上傳圖片、色數放進「更多」選單 */
+  .upload-controls {
+    display: none;
+  }
+
+  body.is-menu-open .upload-controls {
+    position: fixed;
+    z-index: 60;
+    top: calc(max(6px, env(safe-area-inset-top)) + 52px);
+    right: max(6px, env(safe-area-inset-right));
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    width: min(320px, calc(100vw - 12px)) !important;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #ffffff;
+    box-shadow: 0 18px 40px rgba(31, 42, 38, 0.24);
+  }
+
+  body.is-menu-open .upload-controls .upload-status {
+    grid-column: 1 / -1;
+  }
+
+  body.is-menu-open.is-fireworks-active .upload-controls {
+    background: rgba(10, 14, 31, 0.96);
+  }
+
+  .upload-button,
+  .palette-select {
+    width: 100% !important;
+    min-height: 44px;
+  }
+
+  /* ---------- 遊戲區 ---------- */
+  .playfield {
+    grid-area: play;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    padding: 6px;
+    overflow: hidden;
+  }
+
+  .section-title {
+    display: none;
+  }
+
+  .level-gallery {
+    flex: 0 0 auto;
+    gap: 6px;
+    max-width: 100%;
+    margin: 0 0 6px;
+    padding: 4px;
+    scrollbar-width: none;
+  }
+
+  .level-gallery::-webkit-scrollbar {
+    display: none;
+  }
+
+  .level-thumb-item {
+    width: 42px;
+    height: 42px;
+  }
+
+  .level-thumb {
+    padding: 2px;
+    border-radius: 6px;
+  }
+
+  .game-canvas {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 0;
+    border-width: 5px;
+  }
+
+  .completion-overlay {
+    inset: 6px;
+  }
+
+  .completion-panel {
+    min-width: 0;
+    max-width: calc(100% - 24px);
+    padding: 16px 18px;
+  }
+
+  /* ---------- 控制區（道具＋水桶） ---------- */
+  .side-panel {
+    grid-area: side;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    min-height: 0;
+    padding: 6px;
+  }
+
+  .panel-section .section-heading {
+    display: none;
+  }
+
+  .power-palette {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+  }
+
+  .power-palette::-webkit-scrollbar {
+    display: none;
+  }
+
+  .power-tool-button {
+    flex: 0 0 92px;
+    min-height: 50px;
+    padding: 5px 8px 5px 12px !important;
+    scroll-snap-align: start;
+  }
+
+  /* 小螢幕上拿掉道具卡右下角的裝飾圖示，避免和數量徽章重疊 */
+  .power-tool-button::after {
+    display: none;
+  }
+
+  .power-tool-name {
+    font-size: 12px;
+  }
+
+  .power-tool-value {
+    font-size: 15px;
+  }
+
+  .power-tool-count {
+    top: 3px;
+    right: 3px;
+    min-width: 18px;
+    height: 18px;
+    font-size: 11px;
+  }
+
+  .power-status:empty {
+    display: none;
+  }
+
+  .power-status {
+    margin-top: 4px;
+    font-size: 12px;
+  }
+
+  .bucket-palette {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(40px, 1fr)) !important;
+    gap: 6px;
+  }
+
+  .bucket-button {
+    min-height: 48px !important;
+    padding: 4px !important;
+  }
+
+  .bucket-icon {
+    width: 32px;
+    height: 30px;
+  }
+}
+
+/* ============================================================
+   手機直向：頂列 → 遊戲 → 控制區，由上而下
+   ============================================================ */
+@media (max-width: 1100px) and (orientation: portrait) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "top"
+      "play"
+      "side";
+  }
+}
+
+/* ============================================================
+   手機橫向：左邊遊戲畫面撐滿高度，右邊放頂列與控制區
+   ============================================================ */
+@media (max-width: 1100px) and (orientation: landscape), (max-height: 560px) and (orientation: landscape) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, min(42vw, 420px));
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas:
+      "play top"
+      "play side";
+  }
+
+  .side-panel {
+    overflow-y: auto;
+  }
+
+  .power-palette {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+    overflow: visible;
+  }
+
+  .power-tool-button {
+    flex: none;
+  }
+
+  .level-gallery {
+    order: 2;
+    margin: 6px 0 0;
+  }
+}

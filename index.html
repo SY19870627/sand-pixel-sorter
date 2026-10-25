@@ -2,12 +2,21 @@
 <html lang="zh-Hant-TW">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#267f78" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Sand Pixel" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icons/icon-192.png" />
     <title>Sand Pixel Sorter</title>
     <link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=" />
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="mobile.css" />
     <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.min.js"></script>
     <script defer src="app.js"></script>
+    <script defer src="mobile.js"></script>
   </head>
   <body>
     <div class="app-shell">
@@ -39,6 +48,10 @@
           <button id="gravityButton" class="gravity-button" type="button" aria-label="切換重力方向">重力 下</button>
           <button id="beltSpeedButton" class="speed-button" type="button" aria-label="調整輸送帶速度">輸送帶 x1</button>
           <button id="resetButton" class="reset-button" type="button">重置關卡</button>
+          <button id="fullscreenButton" class="tool-icon-button fullscreen-button" type="button" aria-label="全螢幕" title="全螢幕" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
+          </button>
+          <button id="menuToggle" class="tool-icon-button menu-toggle" type="button" aria-label="更多選項" aria-expanded="false">⋯</button>
         </div>
       </header>
 
