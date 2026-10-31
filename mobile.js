@@ -73,6 +73,9 @@
   // 選完圖片或色數就自動收起選單
   document.getElementById("imageUploadInput")?.addEventListener("change", () => setMenuOpen(false));
   document.getElementById("paletteSizeSelect")?.addEventListener("change", () => setMenuOpen(false));
+  document.querySelectorAll("[data-about-open]").forEach((button) => {
+    button.addEventListener("click", () => setMenuOpen(false));
+  });
 
   // iOS 上雙指縮放會打亂版面，遊戲中阻擋 gesture 縮放
   document.addEventListener("gesturestart", (event) => event.preventDefault());

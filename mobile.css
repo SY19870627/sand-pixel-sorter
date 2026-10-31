@@ -251,6 +251,19 @@ body.is-fullscreen {
     min-height: 44px;
   }
 
+  /* 桌機的「關於」在標題下方，手機標題隱藏，改放在「更多」選單 */
+  body.is-menu-open .about-menu-button {
+    display: block;
+    grid-column: 1 / -1;
+    min-height: 44px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--ink);
+    background: #ffffff;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
   /* ---------- 遊戲區 ---------- */
   .playfield {
     grid-area: play;

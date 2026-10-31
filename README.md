@@ -20,6 +20,16 @@ http://127.0.0.1:57512/index.html
 
 如果只用一般靜態伺服器開啟，仍可上傳圖片遊玩，但瀏覽器不能直接寫入專案資料夾，因此不會永久保存上傳圖。
 
+## 線上遊玩（GitHub Pages）
+
+這是純靜態網頁，不需要打包，直接從 `main` 分支根目錄發布：
+
+```text
+https://sy19870627.github.io/sand-pixel-sorter/
+```
+
+所有資源（`levels/`、`icons/`、`styles.css` 等）都使用相對路徑，在 Pages 的 `/sand-pixel-sorter/` 子路徑下可以正常讀取。Pages 沒有 `node server.js` 的 API，因此上傳圖片仍可遊玩，但不會保存到圖庫，圖庫刪除也不會生效。
+
 目前 Web 版使用 `Phaser 3 + Bitmap Sand Engine` 負責 Canvas 場景、像素沙畫、吸入粒子與輸送帶顯示。核心規則仍保留在純 JavaScript 狀態模型中，方便之後接 AI 求解或關卡驗證。
 
 目前沙子採用「Uint8Array Grid + ImageData」：

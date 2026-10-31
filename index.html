@@ -17,6 +17,7 @@
     <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.min.js"></script>
     <script defer src="app.js"></script>
     <script defer src="mobile.js"></script>
+    <script defer src="about.js"></script>
   </head>
   <body>
     <div class="app-shell">
@@ -24,6 +25,7 @@
         <div>
           <p class="eyebrow">Prototype</p>
           <h1>Sand Pixel Sorter</h1>
+          <button class="about-link" type="button" data-about-open>關於 · by SY</button>
         </div>
         <div class="topbar-actions">
           <div class="remaining-chip" aria-live="polite">
@@ -44,6 +46,7 @@
               <option value="8">8 色</option>
             </select>
             <span id="uploadStatus" class="upload-status" aria-live="polite"></span>
+            <button class="about-menu-button" type="button" data-about-open>關於遊戲</button>
           </div>
           <button id="gravityButton" class="gravity-button" type="button" aria-label="切換重力方向">重力 下</button>
           <button id="beltSpeedButton" class="speed-button" type="button" aria-label="調整輸送帶速度">輸送帶 x1</button>
@@ -110,5 +113,28 @@
         </aside>
       </main>
     </div>
+
+    <dialog id="aboutDialog" class="about-dialog" aria-labelledby="aboutTitle">
+      <div class="about-panel">
+        <div class="about-header">
+          <h2 id="aboutTitle">關於 Sand Pixel Sorter</h2>
+          <button class="about-close" type="button" data-about-close aria-label="關閉">×</button>
+        </div>
+        <dl class="about-list">
+          <div>
+            <dt>開發者</dt>
+            <dd>SY</dd>
+          </div>
+          <div>
+            <dt>GitHub</dt>
+            <dd><a href="https://github.com/SY19870627" target="_blank" rel="noopener noreferrer">github.com/SY19870627</a></dd>
+          </div>
+          <div>
+            <dt>推特</dt>
+            <dd><a href="https://x.com/nelsonyehfon" target="_blank" rel="noopener noreferrer">x.com/nelsonyehfon</a></dd>
+          </div>
+        </dl>
+      </div>
+    </dialog>
   </body>
 </html>
