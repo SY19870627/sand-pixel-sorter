@@ -46,7 +46,7 @@
               <option value="8">8 色</option>
             </select>
             <span id="uploadStatus" class="upload-status" aria-live="polite"></span>
-            <button class="about-menu-button" type="button" data-about-open>關於遊戲</button>
+            <button class="about-menu-button" type="button" data-about-open>關於 · by SY</button>
           </div>
           <button id="gravityButton" class="gravity-button" type="button" aria-label="切換重力方向">重力 下</button>
           <button id="beltSpeedButton" class="speed-button" type="button" aria-label="調整輸送帶速度">輸送帶 x1</button>
@@ -117,7 +117,17 @@
     <dialog id="aboutDialog" class="about-dialog" aria-labelledby="aboutTitle">
       <div class="about-panel">
         <div class="about-header">
-          <h2 id="aboutTitle">關於 Sand Pixel Sorter</h2>
+          <h2 id="aboutTitle">
+            <svg class="about-icon" viewBox="0 0 8 8" aria-hidden="true" shape-rendering="crispEdges">
+              <rect x="3" y="1" width="2" height="1" fill="#f1d495" />
+              <rect x="2" y="2" width="4" height="1" fill="#e7b965" />
+              <rect x="1" y="3" width="6" height="1" fill="#d6913f" />
+              <rect x="1" y="4" width="6" height="1" fill="#6fc3e8" />
+              <rect x="0" y="5" width="8" height="1" fill="#3b78c7" />
+              <rect x="0" y="6" width="8" height="2" fill="#8f6845" />
+            </svg>
+            <span>關於 Sand Pixel Sorter</span>
+          </h2>
           <button class="about-close" type="button" data-about-close aria-label="關閉">×</button>
         </div>
         <dl class="about-list">
@@ -127,11 +137,11 @@
           </div>
           <div>
             <dt>GitHub</dt>
-            <dd><a href="https://github.com/SY19870627" target="_blank" rel="noopener noreferrer">github.com/SY19870627</a></dd>
+            <dd><a href="https://github.com/SY19870627" target="_blank" rel="noopener noreferrer" aria-label="GitHub：github.com/SY19870627（另開新分頁）">github.com/SY19870627 <span aria-hidden="true">↗</span></a></dd>
           </div>
           <div>
-            <dt>推特</dt>
-            <dd><a href="https://x.com/nelsonyehfon" target="_blank" rel="noopener noreferrer">x.com/nelsonyehfon</a></dd>
+            <dt>X</dt>
+            <dd><a href="https://x.com/nelsonyehfon" target="_blank" rel="noopener noreferrer" aria-label="X：x.com/nelsonyehfon（另開新分頁）">x.com/nelsonyehfon <span aria-hidden="true">↗</span></a></dd>
           </div>
         </dl>
       </div>

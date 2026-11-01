@@ -253,15 +253,23 @@ body.is-fullscreen {
 
   /* 桌機的「關於」在標題下方，手機標題隱藏，改放在「更多」選單 */
   body.is-menu-open .about-menu-button {
-    display: block;
+    display: inline-flex;
+    align-items: center;
     grid-column: 1 / -1;
+    justify-self: start;
     min-height: 44px;
-    border: 1px solid var(--line);
+    padding: 0 10px;
+    border: 0;
     border-radius: 8px;
-    color: var(--ink);
-    background: #ffffff;
-    font-weight: 800;
+    color: var(--muted);
+    background: none;
+    font-size: 14px;
+    font-weight: 600;
     cursor: pointer;
+  }
+
+  body.is-menu-open.is-fireworks-active .about-menu-button {
+    color: rgba(248, 251, 255, 0.78);
   }
 
   /* ---------- 遊戲區 ---------- */
